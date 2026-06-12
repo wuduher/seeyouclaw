@@ -66,6 +66,9 @@ Important boundaries:
   depend on one vendor.
 - The router is a pure TypeScript module, ready to be replaced by a small intent
   classifier if rules are not enough.
+- New code lives under `webui/src/lib/seeyouclaw`,
+  `webui/src/hooks/seeyouclaw`, and `webui/src/components/seeyouclaw` where
+  possible. Existing nanobot components keep thin integration points only.
 
 ## Cost Controls
 
@@ -123,4 +126,3 @@ PR 4: Demo hardening
 - Add route/cost counters for the demo.
 - Add a sample script covering audio-only, visual snapshot, and cooldown.
 - Record demo video and link it from README.
-

@@ -25,6 +25,8 @@ If you find a docs mistake, outdated command, or confusing step, please open an 
 |---|---|---|
 | Start with no technical background | [`start-without-technical-background.md`](./start-without-technical-background.md) | One-command setup, terminal basics, config, API keys, and the first reply |
 | Install and get the first reply | [`quick-start.md`](./quick-start.md) | A working CLI agent and a known-good config path |
+| Build the competition visual assistant | [`seeyouclaw-design.md`](./seeyouclaw-design.md) | User stories, architecture, PR plan, and cost controls |
+| Configure seeyouclaw's first provider | [`seeyouclaw-provider-setup.md`](./seeyouclaw-provider-setup.md) | DeepSeek Flash preset with secrets kept out of git |
 | Understand how the pieces fit | [`concepts.md`](./concepts.md) | Mental model for config, workspace, gateway, channels, tools, memory, and sessions |
 | Choose or change a model provider | [`providers.md`](./providers.md) | Correct provider/model pairing without reading the full config reference |
 | Copy a provider setup recipe | [`provider-cookbook.md`](./provider-cookbook.md) | Pasteable OpenRouter, OpenAI, Anthropic, local model, fallback, and Langfuse setups |

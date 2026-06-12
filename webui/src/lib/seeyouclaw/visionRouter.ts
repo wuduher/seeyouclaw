@@ -9,6 +9,7 @@ export type VisionRouteTrigger =
   | "explicit_visual_reference"
   | "image_limit"
   | "implicit_deixis"
+  | "llm_router"
   | "manual_attachment"
   | "no_visual_need"
   | "screen_or_ocr";
@@ -16,9 +17,13 @@ export type VisionRouteTrigger =
 export type VisionRouteContextKind = "appearance" | "emotion" | "scene" | "screen";
 
 export interface VisionRouteContext {
+  attribute?: string | null;
+  confidence?: number;
   expiresAtMs: number;
   kind: VisionRouteContextKind;
   lastTrigger: VisionRouteTrigger;
+  questionType?: string | null;
+  subject?: string | null;
 }
 
 export interface VisionRouteOptions {
@@ -39,16 +44,49 @@ export interface VisionRouteDecision {
   trigger: VisionRouteTrigger;
 }
 
-interface PendingVisionIntent {
+export interface SeeyouclawVisionRouteRequest {
+  attachedImageCount: number;
+  cameraEnabled: boolean;
+  context?: VisionRouteContext | null;
+  cooldownActive: boolean;
+  maxImagesPerTurn: number;
+  text: string;
+}
+
+export interface SeeyouclawVisionRouteSlot {
+  attribute?: string | null;
+  kind?: VisionRouteContextKind | null;
+  questionType?: string | null;
+  subject?: string | null;
+}
+
+export interface SeeyouclawVisionRouteResponse {
   bypassCooldown?: boolean;
+  confidence?: number;
+  emotionEscalation?: "low" | "medium" | "high";
+  intent?: string;
+  model?: string;
+  needVision: boolean;
+  ok: boolean;
+  reason?: string;
+  route: VisionRouteLevel;
+  slot?: SeeyouclawVisionRouteSlot | null;
+}
+
+interface PendingVisionIntent {
+  attribute?: string | null;
+  bypassCooldown?: boolean;
+  confidence?: number;
   contextKind: VisionRouteContextKind;
   level: VisionRouteLevel;
+  questionType?: string | null;
   reason: string;
   shouldCapture: boolean;
+  subject?: string | null;
   trigger: VisionRouteTrigger;
 }
 
-const VISION_CONTEXT_TTL_MS = 45_000;
+export const VISION_CONTEXT_TTL_MS = 45_000;
 const SHORT_FOLLOWUP_MAX_CHARS = 32;
 
 function zhPattern(source: string): RegExp {
@@ -234,6 +272,10 @@ function nextContextForIntent(
   return {
     kind: intent.contextKind,
     lastTrigger: intent.trigger,
+    ...(intent.attribute ? { attribute: intent.attribute } : {}),
+    ...(intent.confidence !== undefined ? { confidence: intent.confidence } : {}),
+    ...(intent.questionType ? { questionType: intent.questionType } : {}),
+    ...(intent.subject ? { subject: intent.subject } : {}),
     expiresAtMs: nowMs + VISION_CONTEXT_TTL_MS,
   };
 }
@@ -368,6 +410,10 @@ export function formatVisionRoute(decision: VisionRouteDecision): string {
       return "Vision snapshot: implicit reference";
     case "emotion_shift":
       return "Vision snapshot: stress cue";
+    case "llm_router":
+      return decision.level === "vision_burst"
+        ? "Vision burst: smart route"
+        : "Vision snapshot: smart route";
     case "camera_disabled":
       return "Audio only: camera off";
     case "cooldown":

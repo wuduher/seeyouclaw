@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
+import { SEEYOUCLAW_VISION_MODEL_PRESET } from "@/lib/seeyouclaw/modelRouting";
 
 const ORIGINAL_MEDIA_DEVICES = navigator.mediaDevices;
 const VIDEO_DESCRIPTORS = {
@@ -69,7 +70,7 @@ describe("seeyouclaw composer loop", () => {
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
     const [content, images, options] = onSend.mock.calls[0];
     expect(content).toBe("look at this object");
-    expect(options).toBeUndefined();
+    expect(options).toEqual({ modelPreset: SEEYOUCLAW_VISION_MODEL_PRESET });
     expect(images).toHaveLength(1);
     expect(images[0].media).toEqual({
       data_url: "data:image/jpeg;base64,c2VleW91Y2xhdw==",
@@ -77,6 +78,54 @@ describe("seeyouclaw composer loop", () => {
     });
     expect(images[0].preview.url).toBe("data:image/jpeg;base64,c2VleW91Y2xhdw==");
     expect(await screen.findByText(/Vision snapshot: visual request/)).toBeInTheDocument();
+  });
+
+  it("uses the remote semantic router for visible object attributes", async () => {
+    mockCameraReady();
+    const onSend = vi.fn();
+    const onRouteVisionIntent = vi.fn(async () => ({
+      ok: true,
+      needVision: true,
+      route: "vision_snapshot" as const,
+      intent: "visual_attribute",
+      reason: "asks for a visible chair color",
+      confidence: 0.92,
+      emotionEscalation: "low" as const,
+      slot: {
+        kind: "scene" as const,
+        subject: "chair",
+        attribute: "color",
+        questionType: "attribute",
+      },
+    }));
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        onRouteVisionIntent={onRouteVisionIntent}
+        placeholder="Ask anything..."
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Turn camera on" }));
+    expect(await screen.findByText("Camera ready")).toBeInTheDocument();
+    markRenderedVideoReady();
+
+    const chairQuestion = "\u6211\u7684\u6905\u5b50\u662f\u4ec0\u4e48\u989c\u8272\u7684";
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: chairQuestion } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(onRouteVisionIntent).toHaveBeenCalledWith(expect.objectContaining({
+      cameraEnabled: true,
+      cooldownActive: false,
+      text: chairQuestion,
+    }));
+    const [content, images, options] = onSend.mock.calls[0];
+    expect(content).toBe(chairQuestion);
+    expect(options).toEqual({ modelPreset: SEEYOUCLAW_VISION_MODEL_PRESET });
+    expect(images).toHaveLength(1);
+    expect(await screen.findByText(/Vision snapshot: smart route/)).toBeInTheDocument();
   });
 
   it("falls back to text-only when camera capture fails", async () => {

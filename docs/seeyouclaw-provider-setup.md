@@ -55,6 +55,12 @@ nanobot status
 nanobot agent -m "Say hello and introduce seeyouclaw in one sentence."
 ```
 
+The seeyouclaw semantic vision router looks for presets in this order:
+`seeyouclaw-router`, `deepseek-v4-flash`, `deepseek-flash`, then the default
+model preset. For the two-day build, `deepseek-flash` is enough. Add a separate
+`seeyouclaw-router` preset later only if you want routing to use a different
+temperature, model, or provider than normal chat.
+
 ## Qwen ASR Transcription
 
 Set the DashScope key in the terminal that starts nanobot.
@@ -140,5 +146,7 @@ To switch to a different provider, change only:
 - `transcription.model`
 
 DeepSeek is currently used as the low-latency text provider. DashScope Qwen ASR
-handles speech-to-text. For stronger visual understanding, add a vision-capable
-provider preset and route image-heavy turns to that preset in a later PR.
+handles speech-to-text. The router uses DeepSeek only for locally ambiguous
+text turns; obvious visual requests and ordinary turns stay on the local rule
+path. For stronger visual understanding, add a vision-capable provider preset
+and route image-heavy turns to that preset in a later PR.

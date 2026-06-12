@@ -11,12 +11,19 @@ import { StreamErrorNotice } from "@/components/thread/StreamErrorNotice";
 import { ThreadViewport, type ThreadViewportHandle } from "@/components/thread/ThreadViewport";
 import { useNanobotStream, type SendImage, type SendOptions } from "@/hooks/useNanobotStream";
 import { useSessionHistory } from "@/hooks/useSessions";
-import { fetchCliApps, fetchMcpPresets, fetchSettings, listSlashCommands } from "@/lib/api";
+import {
+  fetchCliApps,
+  fetchMcpPresets,
+  fetchSeeyouclawVisionRoute,
+  fetchSettings,
+  listSlashCommands,
+} from "@/lib/api";
 import {
   CLI_APPS_CHANGED_EVENT,
   installedCliAppsFromPayload,
   isCliAppsPayload,
 } from "@/lib/cli-app-events";
+import { supportsBrowserSpeechRecognition } from "@/lib/browserSpeechRecognition";
 import {
   MCP_PRESETS_CHANGED_EVENT,
   installedMcpPresetsFromPayload,
@@ -349,6 +356,35 @@ export function ThreadShell({
     () => toModelBadgeInfo(modelName, settings),
     [modelName, settings],
   );
+  const browserSpeechSupported = useMemo(
+    () => supportsBrowserSpeechRecognition(),
+    [],
+  );
+  const transcriptionSettings = settings?.transcription;
+  const transcriptionFeatureEnabled = transcriptionSettings?.enabled ?? true;
+  const cloudTranscriptionReady = Boolean(
+    transcriptionSettings?.enabled
+    && transcriptionSettings.provider_configured,
+  );
+  const preferBrowserSpeechFallback = Boolean(
+    browserSpeechSupported
+    && transcriptionFeatureEnabled
+    && !cloudTranscriptionReady,
+  );
+  const effectiveTranscribeAudio = cloudTranscriptionReady
+    ? transcribeAudio
+    : undefined;
+  const browserSpeechRecognition = preferBrowserSpeechFallback
+    ? {
+        enabled: true,
+        language: transcriptionSettings?.language ?? null,
+      }
+    : undefined;
+  const routeSeeyouclawVisionIntent = useCallback(
+    (payload: Parameters<typeof fetchSeeyouclawVisionRoute>[1]) =>
+      fetchSeeyouclawVisionRoute(token, payload),
+    [token],
+  );
   const modelBadgeLabel = modelBadge.needsSetup
     ? t("thread.composer.modelNotConfigured", { defaultValue: "Model not configured" })
     : modelBadge.label;
@@ -670,7 +706,9 @@ export function ThreadShell({
           cliApps={cliApps}
           mcpPresets={mcpPresets}
           onStop={stop}
-          onTranscribeAudio={transcribeAudio}
+          onTranscribeAudio={effectiveTranscribeAudio}
+          onRouteVisionIntent={routeSeeyouclawVisionIntent}
+          browserSpeechRecognition={browserSpeechRecognition}
           runStartedAt={runStartedAt}
           goalState={goalState}
           workspaceScope={workspaceScope}
@@ -701,7 +739,9 @@ export function ThreadShell({
           cliApps={cliApps}
           mcpPresets={mcpPresets}
           runStartedAt={runStartedAt}
-          onTranscribeAudio={transcribeAudio}
+          onTranscribeAudio={effectiveTranscribeAudio}
+          onRouteVisionIntent={routeSeeyouclawVisionIntent}
+          browserSpeechRecognition={browserSpeechRecognition}
           goalState={goalState}
           workspaceScope={workspaceScope}
           workspaceDefaultScope={workspaceDefaultScope}

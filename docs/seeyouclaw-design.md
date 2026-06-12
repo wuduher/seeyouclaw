@@ -23,16 +23,35 @@ Planned for the competition build:
 
 Implemented in the first pass:
 
-- Microphone transcription is reused from nanobot WebUI.
+- Microphone transcription keeps nanobot's WebUI flow, with browser speech
+  recognition fallback when no cloud transcription provider is configured.
 - Camera permission, local preview, and one-frame snapshot capture are available
   in the composer.
 - A pure `seeyouclaw` vision router detects visual requests, screen/OCR prompts,
   implicit references, stress cues, cooldown, and image-limit conditions.
+- The router keeps a short-lived semantic slot for active visual topics such as
+  appearance, screen, scene, and emotion, so follow-ups like `now?`, `this
+  color?`, or `this line?` can still route to vision without repeating the full
+  visual intent.
+- A DeepSeek Flash-assisted router runs only after the local router returns
+  `no_visual_need`. It catches broader object-attribute questions such as
+  `my chair color`, stronger emotion shifts, and semantic-slot follow-ups
+  without hard-coding every object noun.
 - Triggered snapshots are appended to the existing WebSocket image attachment
   payload, so no protocol fork is needed.
 - Router unit tests cover audio-only, visual trigger, disabled camera, image
   limit, and cooldown behavior.
+- Composer loop tests cover the first stable demo path: text-only turns stay
+  text-only, visual turns attach exactly one camera snapshot, and camera failure
+  falls back to a text turn with an inline notice.
 - DeepSeek Flash configuration is documented as a replaceable provider preset.
+
+Stable loop before intelligence:
+
+- The first demo loop must work with manual camera enablement, voice-to-text,
+  one routed snapshot, and a streamed model reply.
+- Profile, emotion routing, burst capture, and local scene-change detection stay
+  behind this baseline. They are useful only after the basic loop is reliable.
 
 Deferred after the stable loop:
 
@@ -48,7 +67,9 @@ Deferred after the stable loop:
 flowchart LR
   U["User voice/text"] --> C["WebUI Composer"]
   Cam["Local camera stream"] --> Snap["On-demand snapshot"]
-  C --> R["seeyouclaw Vision Router"]
+  C --> R["Local Vision Router"]
+  R -->|"uncertain"| LR["DeepSeek Flash Router"]
+  LR --> R
   R -->|"audio_only"| WS["nanobot WebSocket"]
   R -->|"vision_snapshot"| Snap
   Snap --> WS
@@ -66,6 +87,9 @@ Important boundaries:
   depend on one vendor.
 - The router is a pure TypeScript module, ready to be replaced by a small intent
   classifier if rules are not enough.
+- The LLM router is a protected WebUI API and never writes into the chat
+  transcript. If it times out or returns malformed JSON, the composer falls back
+  to the local route.
 - New code lives under `webui/src/lib/seeyouclaw`,
   `webui/src/hooks/seeyouclaw`, and `webui/src/components/seeyouclaw` where
   possible. Existing nanobot components keep thin integration points only.
@@ -92,6 +116,11 @@ Actually adopted in the first pass:
 - The router defaults to `audio_only`.
 - Visual uploads happen only for explicit visual, screen/OCR, implicit reference,
   or stress-cue triggers.
+- Short-lived semantic slots keep follow-up turns contextual without forcing
+  continuous camera use.
+- DeepSeek Flash routing is only called for locally ambiguous text turns, so
+  obvious visual requests stay low-latency and ordinary turns avoid extra
+  provider calls.
 - Snapshot capture has a 2.5 second cooldown.
 - Existing `MAX_IMAGES_PER_MESSAGE` prevents runaway attachment uploads.
 - Manual attachments suppress redundant camera snapshots when no visual trigger
@@ -100,6 +129,8 @@ Actually adopted in the first pass:
   JPEG at quality `0.72`.
 - DeepSeek Flash is configured with `reasoningEffort: "none"` for lower latency
   in the first demo loop.
+- Voice input prefers a browser-local fallback before requiring a cloud speech
+  provider, which lowers demo friction and keeps operator cost optional.
 
 ## Two-Day PR Plan
 

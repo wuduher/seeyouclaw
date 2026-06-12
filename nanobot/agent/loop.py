@@ -1217,6 +1217,22 @@ class AgentLoop:
                 pending_queue=pending_queue,
             )
 
+        override_preset_raw = msg.metadata.get("model_preset")
+        override_preset = (
+            override_preset_raw.strip()
+            if isinstance(override_preset_raw, str) and override_preset_raw.strip()
+            else None
+        )
+        restore_preset = self._active_preset
+        if override_preset and override_preset != restore_preset:
+            try:
+                self.set_model_preset(override_preset, publish_update=True)
+            except Exception:
+                logger.exception(
+                    "Failed to apply per-turn model preset {}",
+                    override_preset,
+                )
+
         key = session_key or msg.session_key
         t0 = time.time()
         ctx = TurnContext(
@@ -1237,59 +1253,69 @@ class AgentLoop:
             tools=tools,
         )
 
-        while ctx.state is not TurnState.DONE:
-            handler_name = f"_state_{ctx.state.name.lower()}"
-            handler = getattr(self, handler_name, None)
-            if handler is None:
-                raise RuntimeError(f"Missing state handler for {ctx.state}")
+        try:
+            while ctx.state is not TurnState.DONE:
+                handler_name = f"_state_{ctx.state.name.lower()}"
+                handler = getattr(self, handler_name, None)
+                if handler is None:
+                    raise RuntimeError(f"Missing state handler for {ctx.state}")
 
-            t0 = time.perf_counter()
-            try:
-                event = await handler(ctx)
-            except Exception:
+                t0 = time.perf_counter()
+                try:
+                    event = await handler(ctx)
+                except Exception:
+                    duration = (time.perf_counter() - t0) * 1000
+                    ctx.trace.append(
+                        StateTraceEntry(
+                            state=ctx.state,
+                            started_at=t0,
+                            duration_ms=duration,
+                            event="",
+                            error="exception",
+                        )
+                    )
+                    raise
+
                 duration = (time.perf_counter() - t0) * 1000
                 ctx.trace.append(
                     StateTraceEntry(
                         state=ctx.state,
                         started_at=t0,
                         duration_ms=duration,
-                        event="",
-                        error="exception",
+                        event=event,
                     )
                 )
-                raise
-
-            duration = (time.perf_counter() - t0) * 1000
-            ctx.trace.append(
-                StateTraceEntry(
-                    state=ctx.state,
-                    started_at=t0,
-                    duration_ms=duration,
-                    event=event,
+                logger.debug(
+                    "[turn {}] State {} took {:.1f}ms -> event {}",
+                    ctx.turn_id,
+                    ctx.state.name,
+                    duration,
+                    event,
                 )
-            )
+
+                next_state = self._TRANSITIONS.get((ctx.state, event))
+                if next_state is None:
+                    raise RuntimeError(
+                        f"[turn {ctx.turn_id}] No transition from {ctx.state} "
+                        f"on event {event!r}"
+                    )
+                ctx.state = next_state
+
             logger.debug(
-                "[turn {}] State {} took {:.1f}ms -> event {}",
+                "[turn {}] Turn completed after {} states",
                 ctx.turn_id,
-                ctx.state.name,
-                duration,
-                event,
+                len(ctx.trace),
             )
-
-            next_state = self._TRANSITIONS.get((ctx.state, event))
-            if next_state is None:
-                raise RuntimeError(
-                    f"[turn {ctx.turn_id}] No transition from {ctx.state} "
-                    f"on event {event!r}"
-                )
-            ctx.state = next_state
-
-        logger.debug(
-            "[turn {}] Turn completed after {} states",
-            ctx.turn_id,
-            len(ctx.trace),
-        )
-        return ctx.outbound
+            return ctx.outbound
+        finally:
+            if override_preset and override_preset != restore_preset:
+                try:
+                    self.set_model_preset(restore_preset, publish_update=True)
+                except Exception:
+                    logger.exception(
+                        "Failed to restore model preset after per-turn override {}",
+                        restore_preset,
+                    )
 
     def _assemble_outbound(
         self,

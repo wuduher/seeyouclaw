@@ -68,6 +68,7 @@ import { useClipboardAndDrop } from "@/hooks/useClipboardAndDrop";
 import type { SendImage, SendOptions } from "@/hooks/useNanobotStream";
 import { useSeeyouclawVision } from "@/hooks/seeyouclaw/useSeeyouclawVision";
 import { useVoiceRecorder, type VoiceRecorderErrorKey } from "@/hooks/useVoiceRecorder";
+import type { BrowserSpeechRecognitionConfig } from "@/lib/browserSpeechRecognition";
 import type {
   CliAppInfo,
   GoalStateWsPayload,
@@ -88,6 +89,11 @@ import {
   SeeyouclawVisionButton,
   SeeyouclawVisionPanel,
 } from "@/components/seeyouclaw/SeeyouclawVisionControl";
+import { SEEYOUCLAW_VISION_MODEL_PRESET } from "@/lib/seeyouclaw/modelRouting";
+import type {
+  SeeyouclawVisionRouteRequest,
+  SeeyouclawVisionRouteResponse,
+} from "@/lib/seeyouclaw/visionRouter";
 
 /** ``<input accept>``: aligned with the server's MIME whitelist. SVG is
  * deliberately excluded to avoid an embedded-script XSS surface. */
@@ -166,6 +172,10 @@ interface ThreadComposerProps {
   mcpPresets?: McpPresetInfo[];
   onStop?: () => void;
   onTranscribeAudio?: (dataUrl: string, options?: { durationMs?: number }) => Promise<string>;
+  onRouteVisionIntent?: (
+    payload: SeeyouclawVisionRouteRequest,
+  ) => Promise<SeeyouclawVisionRouteResponse>;
+  browserSpeechRecognition?: BrowserSpeechRecognitionConfig;
   /** Unix seconds from server; turn elapsed timer above input while set. */
   runStartedAt?: number | null;
   /** Sustained objective for this chat (WebSocket ``goal_state``). */
@@ -761,6 +771,8 @@ export function ThreadComposer({
   mcpPresets = [],
   onStop,
   onTranscribeAudio,
+  onRouteVisionIntent,
+  browserSpeechRecognition,
   runStartedAt = null,
   goalState,
   workspaceScope = null,
@@ -792,6 +804,7 @@ export function ThreadComposer({
   const skipNextQueuedFlushRef = useRef(false);
   const skipQueuedPromptPersistRef = useRef(false);
   const voiceShortcutDownRef = useRef(false);
+  const visionCaptureFailedRef = useRef(false);
   const isHero = variant === "hero";
   const voiceShortcutLabel = useMemo(getVoiceShortcutLabel, []);
   const queuedPromptStorageKey = useMemo(
@@ -870,13 +883,36 @@ export function ThreadComposer({
     [images],
   );
   const hasErrors = images.some((img) => img.status === "error");
-  const setVisionCaptureError = useCallback(() => {
-    setInlineError(t("thread.composer.camera.captureFailed", {
+  const seeyouclawVisionLabels = useMemo(() => ({
+    audioOnlyCameraUnavailable: t("thread.composer.camera.audioOnlyUnavailable", {
+      defaultValue: "Audio only: camera unavailable",
+    }),
+    cameraReady: t("thread.composer.camera.ready", { defaultValue: "Camera ready" }),
+    cameraStarting: t("thread.composer.camera.starting", { defaultValue: "Camera starting" }),
+    cameraUnavailable: t("thread.composer.camera.error", {
+      defaultValue: "Camera unavailable",
+    }),
+    turnCameraOff: t("thread.composer.camera.off", { defaultValue: "Turn camera off" }),
+    turnCameraOn: t("thread.composer.camera.on", { defaultValue: "Turn camera on" }),
+  }), [t]);
+  const visionCaptureErrorMessage = useMemo(
+    () => t("thread.composer.camera.captureFailed", {
       defaultValue: "Camera snapshot failed. Sending text only.",
-    }));
-  }, [t]);
+    }),
+    [t],
+  );
+  const setVisionCaptureError = useCallback(() => {
+    visionCaptureFailedRef.current = true;
+    setInlineError(visionCaptureErrorMessage);
+  }, [visionCaptureErrorMessage]);
+  const clearVisionInlineError = useCallback(() => {
+    setInlineError(null);
+  }, []);
   const seeyouclawVision = useSeeyouclawVision({
+    labels: seeyouclawVisionLabels,
     onCaptureError: setVisionCaptureError,
+    onRouteVisionIntent,
+    onToggle: clearVisionInlineError,
   });
 
   const hasComposerContent = value.trim().length > 0 || readyImages.length > 0;
@@ -1180,15 +1216,17 @@ export function ThreadComposer({
     setInlineError(t(`thread.composer.voiceErrors.${key}`));
   }, [t]);
   const voiceRecorder = useVoiceRecorder({
+    browserSpeechRecognition,
     disabled,
     onClearError: clearInlineError,
     onError: setVoiceError,
     onTranscript: appendTranscription,
     onTranscribeAudio,
   });
+  const hasVoiceInput = Boolean(onTranscribeAudio || browserSpeechRecognition?.enabled);
 
   useEffect(() => {
-    if (!onTranscribeAudio) return;
+    if (!hasVoiceInput) return;
 
     function onKeyDown(event: KeyboardEvent): void {
       if (!isVoiceShortcutDown(event) || event.repeat || voiceShortcutDownRef.current) return;
@@ -1218,7 +1256,7 @@ export function ThreadComposer({
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onWindowBlur);
     };
-  }, [onTranscribeAudio, voiceRecorder.beginShortcutHold, voiceRecorder.endShortcutHold]);
+  }, [hasVoiceInput, voiceRecorder.beginShortcutHold, voiceRecorder.endShortcutHold]);
 
   const chooseSlashCommand = useCallback(
     (command: SlashCommand) => {
@@ -1404,29 +1442,34 @@ export function ThreadComposer({
             preview: { url: img.dataUrl, name: img.file.name },
           }))
         : undefined;
+    visionCaptureFailedRef.current = false;
     const visionImage = await seeyouclawVision.prepareAttachment(
       content,
       payload?.length ?? 0,
     );
+    const hadVisionCaptureError = visionCaptureFailedRef.current;
     const outboundPayload =
       visionImage
         ? [...(payload ?? []), visionImage]
         : payload;
     const attachedCliApps = activeCliMentionApps.map(cliAppMentionPayload);
     const attachedMcpPresets = activeMcpPresetMentions.map(mcpPresetMentionPayload);
+    const sendOptions: SendOptions = {
+      ...(attachedCliApps.length > 0 ? { cliApps: attachedCliApps } : {}),
+      ...(attachedMcpPresets.length > 0 ? { mcpPresets: attachedMcpPresets } : {}),
+      ...(outboundPayload?.length ? { modelPreset: SEEYOUCLAW_VISION_MODEL_PRESET } : {}),
+    };
     const options: SendOptions | undefined =
-      attachedCliApps.length > 0 || attachedMcpPresets.length > 0
-        ? {
-            ...(attachedCliApps.length > 0 ? { cliApps: attachedCliApps } : {}),
-            ...(attachedMcpPresets.length > 0 ? { mcpPresets: attachedMcpPresets } : {}),
-          }
-        : undefined;
+      Object.keys(sendOptions).length > 0 ? sendOptions : undefined;
     onSend(content, outboundPayload, options);
     setQueuedPrompts([]);
     // Bubble owns the data URL copy; safe to revoke every staged blob
     // preview here without affecting the rendered message.
     clear();
     clearComposerText();
+    if (hadVisionCaptureError) {
+      setInlineError(visionCaptureErrorMessage);
+    }
   }, [
     activeCliMentionApps,
     activeMcpPresetMentions,
@@ -1439,6 +1482,7 @@ export function ThreadComposer({
     readyImages,
     seeyouclawVision,
     value,
+    visionCaptureErrorMessage,
   ]);
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
@@ -1544,7 +1588,7 @@ export function ThreadComposer({
   );
 
   const attachButtonDisabled = disabled || full;
-  const showVoiceButton = Boolean(onTranscribeAudio);
+  const showVoiceButton = hasVoiceInput;
   const voiceRecordingStatusLabel = t("thread.composer.voice.recordingStatus", {
     time: voiceRecorder.elapsedLabel,
     defaultValue: `Recording ${voiceRecorder.elapsedLabel}`,

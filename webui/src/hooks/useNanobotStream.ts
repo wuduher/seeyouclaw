@@ -422,6 +422,7 @@ export interface SendOptions {
   imageGeneration?: OutboundImageGeneration;
   cliApps?: OutboundCliAppMention[];
   mcpPresets?: OutboundMcpPresetMention[];
+  modelPreset?: string;
   workspaceScope?: WorkspaceScopePayload | null;
 }
 

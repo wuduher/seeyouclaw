@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
 import type { EncodeResponse } from "@/lib/imageEncode";
+import { SEEYOUCLAW_VISION_MODEL_PRESET } from "@/lib/seeyouclaw/modelRouting";
 
 const encodeImage = vi.fn<(file: File) => Promise<EncodeResponse>>();
 
@@ -75,12 +76,13 @@ describe("ThreadComposer — image attachments", () => {
     fireEvent.change(textarea, { target: { value: "hi" } });
     fireEvent.keyDown(textarea, { key: "Enter" });
 
-    expect(onSend).toHaveBeenCalledTimes(1);
-    const [content, images] = onSend.mock.calls[0];
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    const [content, images, options] = onSend.mock.calls[0];
     expect(content).toBe("hi");
     expect(images).toHaveLength(1);
     expect(images[0].media.data_url).toContain("data:image/png;base64,");
     expect(images[0].media.name).toBe("a.png");
+    expect(options).toEqual({ modelPreset: SEEYOUCLAW_VISION_MODEL_PRESET });
   });
 
   it("blocks send while an image is still encoding", async () => {
@@ -114,7 +116,7 @@ describe("ThreadComposer — image attachments", () => {
       await Promise.resolve();
     });
     fireEvent.keyDown(textarea, { key: "Enter" });
-    expect(onSend).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
   });
 
   it("rejects a non-image paste silently without adding a chip", async () => {

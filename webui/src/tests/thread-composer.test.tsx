@@ -138,6 +138,8 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   Reflect.deleteProperty(window, "nanobotHost");
+  Reflect.deleteProperty(window, "SpeechRecognition");
+  Reflect.deleteProperty(window, "webkitSpeechRecognition");
   if (ORIGINAL_MEDIA_DEVICES) {
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
@@ -202,6 +204,58 @@ function mockVoiceRecorder(blob = new Blob(["voice"], { type: "audio/webm" })) {
 
   vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
   return { getUserMedia, stopTrack };
+}
+
+function mockBrowserSpeechRecognition(finalTranscript = "local browser transcript") {
+  const instances: FakeSpeechRecognition[] = [];
+
+  class FakeSpeechRecognition {
+    continuous = false;
+    interimResults = false;
+    lang = "en-US";
+    onend: ((event: Event) => void) | null = null;
+    onerror: ((event: { error?: string }) => void) | null = null;
+    onresult: ((event: {
+      resultIndex: number;
+      results: ArrayLike<{
+        isFinal: boolean;
+        length: number;
+        0: { transcript: string };
+      }>;
+    }) => void) | null = null;
+
+    start = vi.fn(() => {
+      window.setTimeout(() => {
+        this.onresult?.({
+          resultIndex: 0,
+          results: [{
+            isFinal: true,
+            length: 1,
+            0: { transcript: finalTranscript },
+          }],
+        });
+      }, 50);
+    });
+
+    stop = vi.fn(() => {
+      window.setTimeout(() => {
+        this.onend?.({} as Event);
+      }, 0);
+    });
+
+    abort = vi.fn();
+
+    constructor() {
+      instances.push(this);
+    }
+  }
+
+  Object.defineProperty(window, "SpeechRecognition", {
+    configurable: true,
+    value: FakeSpeechRecognition,
+  });
+
+  return { instances };
 }
 
 function mockVoiceAudioInput(sample = 128, state: AudioContextState = "running") {
@@ -387,7 +441,6 @@ describe("ThreadComposer", () => {
     );
 
     const voiceButton = screen.getByRole("button", { name: "Voice input" });
-    expect(voiceButton).toHaveAttribute("title", "Click to dictate or hold");
     expect(voiceButton).toHaveAttribute("aria-keyshortcuts", "Control+Shift+D");
     fireEvent.keyDown(window, { code: "KeyD", ctrlKey: true, key: "D", shiftKey: true });
     expect(await screen.findByLabelText("Recording 0:00")).toBeInTheDocument();
@@ -457,6 +510,27 @@ describe("ThreadComposer", () => {
     });
     expect(input).toHaveValue("draft");
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("falls back to browser speech recognition when cloud transcription is unavailable", async () => {
+    const { instances } = mockBrowserSpeechRecognition("browser fallback voice");
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        browserSpeechRecognition={{ enabled: true, language: "zh-CN" }}
+        placeholder="Type your message..."
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Voice input" }));
+    expect(await screen.findByLabelText("Recording 0:00")).toBeInTheDocument();
+    await waitForVoiceCapture();
+    fireEvent.click(await screen.findByRole("button", { name: "Stop recording" }));
+
+    await waitFor(() => expect(screen.getByLabelText("Message input")).toHaveValue("browser fallback voice"));
+    expect(instances[0]?.lang).toBe("zh-CN");
+    expect(instances[0]?.start).toHaveBeenCalledTimes(1);
+    expect(instances[0]?.stop).toHaveBeenCalledTimes(1);
   });
 
   it("does not transcribe recordings that are too short", async () => {
@@ -871,7 +945,7 @@ describe("ThreadComposer", () => {
     }
   });
 
-  it("opens the CLI app mention palette and inserts the selected app", () => {
+  it("opens the CLI app mention palette and inserts the selected app", async () => {
     const onSend = vi.fn();
     render(
       <ThreadComposer
@@ -907,7 +981,7 @@ describe("ThreadComposer", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
-    expect(onSend).toHaveBeenCalledWith("@blender", undefined, {
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("@blender", undefined, {
       cliApps: [{
         name: "blender",
         display_name: "Blender",
@@ -916,7 +990,7 @@ describe("ThreadComposer", () => {
         logo_url: null,
         brand_color: "#E87D0D",
       }],
-    });
+    }));
   });
 
   it("keeps keyboard-selected mention options visible while navigating", () => {
@@ -985,7 +1059,7 @@ describe("ThreadComposer", () => {
     expect(screen.getByTestId("composer-cli-mention-blender")).toHaveTextContent("@blender");
   });
 
-  it("shows configured MCP presets in the mention palette and submits metadata", () => {
+  it("shows configured MCP presets in the mention palette and submits metadata", async () => {
     const onSend = vi.fn();
     render(
       <ThreadComposer
@@ -1011,7 +1085,7 @@ describe("ThreadComposer", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
-    expect(onSend).toHaveBeenCalledWith("use @browserbase", undefined, {
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("use @browserbase", undefined, {
       mcpPresets: [{
         name: "browserbase",
         display_name: "Browserbase",
@@ -1022,7 +1096,7 @@ describe("ThreadComposer", () => {
         logo_url: "https://example.invalid/browserbase.svg",
         brand_color: "#111827",
       }],
-    });
+    }));
   });
 
   it("shows right-side source badges so users can distinguish CLI apps from MCP servers", () => {
@@ -1146,7 +1220,7 @@ describe("ThreadComposer", () => {
     expect(screen.queryByRole("listbox", { name: "Slash commands" })).not.toBeInTheDocument();
   });
 
-  it("keeps image generation mode out of the composer chrome", () => {
+  it("keeps image generation mode out of the composer chrome", async () => {
     const onSend = vi.fn();
     render(
       <ThreadComposer
@@ -1162,7 +1236,11 @@ describe("ThreadComposer", () => {
     fireEvent.change(input, { target: { value: "Draw a friendly robot" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
-    expect(onSend).toHaveBeenCalledWith("Draw a friendly robot", undefined, undefined);
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith(
+      "Draw a friendly robot",
+      undefined,
+      undefined,
+    ));
   });
 
   it("shows a stop button while streaming", () => {

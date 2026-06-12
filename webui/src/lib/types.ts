@@ -903,6 +903,7 @@ export type Outbound =
       image_generation?: OutboundImageGeneration;
       cli_apps?: OutboundCliAppMention[];
       mcp_presets?: OutboundMcpPresetMention[];
+      model_preset?: string;
       workspace_scope?: WorkspaceScopePayload;
       turn_id?: string;
       /** Marks messages sent by the embedded WebUI, without changing the

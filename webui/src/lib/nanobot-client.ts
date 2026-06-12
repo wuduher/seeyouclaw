@@ -388,6 +388,7 @@ export class NanobotClient {
       imageGeneration?: OutboundImageGeneration;
       cliApps?: OutboundCliAppMention[];
       mcpPresets?: OutboundMcpPresetMention[];
+      modelPreset?: string;
       workspaceScope?: WorkspaceScopePayload | null;
       turnId?: string;
     },
@@ -401,6 +402,7 @@ export class NanobotClient {
       ...(options?.imageGeneration ? { image_generation: options.imageGeneration } : {}),
       ...(options?.cliApps?.length ? { cli_apps: options.cliApps } : {}),
       ...(options?.mcpPresets?.length ? { mcp_presets: options.mcpPresets } : {}),
+      ...(options?.modelPreset ? { model_preset: options.modelPreset } : {}),
       ...(options?.workspaceScope ? { workspace_scope: options.workspaceScope } : {}),
       ...(options?.turnId ? { turn_id: options.turnId } : {}),
       webui: true,

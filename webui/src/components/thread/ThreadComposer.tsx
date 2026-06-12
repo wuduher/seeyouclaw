@@ -792,6 +792,7 @@ export function ThreadComposer({
   const skipNextQueuedFlushRef = useRef(false);
   const skipQueuedPromptPersistRef = useRef(false);
   const voiceShortcutDownRef = useRef(false);
+  const visionCaptureFailedRef = useRef(false);
   const isHero = variant === "hero";
   const voiceShortcutLabel = useMemo(getVoiceShortcutLabel, []);
   const queuedPromptStorageKey = useMemo(
@@ -882,11 +883,16 @@ export function ThreadComposer({
     turnCameraOff: t("thread.composer.camera.off", { defaultValue: "Turn camera off" }),
     turnCameraOn: t("thread.composer.camera.on", { defaultValue: "Turn camera on" }),
   }), [t]);
-  const setVisionCaptureError = useCallback(() => {
-    setInlineError(t("thread.composer.camera.captureFailed", {
+  const visionCaptureErrorMessage = useMemo(
+    () => t("thread.composer.camera.captureFailed", {
       defaultValue: "Camera snapshot failed. Sending text only.",
-    }));
-  }, [t]);
+    }),
+    [t],
+  );
+  const setVisionCaptureError = useCallback(() => {
+    visionCaptureFailedRef.current = true;
+    setInlineError(visionCaptureErrorMessage);
+  }, [visionCaptureErrorMessage]);
   const clearVisionInlineError = useCallback(() => {
     setInlineError(null);
   }, []);
@@ -1421,10 +1427,12 @@ export function ThreadComposer({
             preview: { url: img.dataUrl, name: img.file.name },
           }))
         : undefined;
+    visionCaptureFailedRef.current = false;
     const visionImage = await seeyouclawVision.prepareAttachment(
       content,
       payload?.length ?? 0,
     );
+    const hadVisionCaptureError = visionCaptureFailedRef.current;
     const outboundPayload =
       visionImage
         ? [...(payload ?? []), visionImage]
@@ -1444,6 +1452,9 @@ export function ThreadComposer({
     // preview here without affecting the rendered message.
     clear();
     clearComposerText();
+    if (hadVisionCaptureError) {
+      setInlineError(visionCaptureErrorMessage);
+    }
   }, [
     activeCliMentionApps,
     activeMcpPresetMentions,
@@ -1456,6 +1467,7 @@ export function ThreadComposer({
     readyImages,
     seeyouclawVision,
     value,
+    visionCaptureErrorMessage,
   ]);
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {

@@ -23,6 +23,7 @@ from nanobot.audio.transcription_registry import (
 from nanobot.config.schema import Config
 from nanobot.providers.transcription import (
     AssemblyAITranscriptionProvider,
+    DashScopeTranscriptionProvider,
     GroqTranscriptionProvider,
     OpenAITranscriptionProvider,
     OpenRouterTranscriptionProvider,
@@ -115,6 +116,22 @@ def test_resolver_supports_openrouter_transcription_provider() -> None:
     assert resolved.api_base == "https://openrouter.ai/api/v1"
 
 
+def test_resolver_supports_dashscope_transcription_provider() -> None:
+    config = Config()
+    config.transcription.provider = "dashscope"
+    config.transcription.model = "qwen3-asr-flash"
+    config.transcription.language = "zh"
+    config.providers.dashscope.api_key = "dashscope-test"
+
+    resolved = resolve_transcription_config(config)
+
+    assert resolved.provider == "dashscope"
+    assert resolved.model == "qwen3-asr-flash"
+    assert resolved.language == "zh"
+    assert resolved.api_key == "dashscope-test"
+    assert resolved.api_base == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+
 def test_resolver_supports_siliconflow_transcription_provider() -> None:
     config = Config()
     config.transcription.provider = "siliconflow"
@@ -189,6 +206,13 @@ def test_resolver_accepts_legacy_xiaomi_transcription_alias() -> None:
 
 
 def test_transcription_registry_lists_providers_and_aliases() -> None:
+    dashscope = get_transcription_provider("dashscope")
+    assert dashscope is not None
+    assert dashscope.adapter == "nanobot.providers.transcription:DashScopeTranscriptionProvider"
+    assert dashscope.load_adapter() is DashScopeTranscriptionProvider
+    assert dashscope.default_model == "qwen3-asr-flash"
+    assert resolve_transcription_provider("qwen_asr").name == "dashscope"
+
     siliconflow = get_transcription_provider("siliconflow")
     assert siliconflow is not None
     assert siliconflow.adapter == "nanobot.providers.transcription:OpenAITranscriptionProvider"
@@ -250,6 +274,42 @@ async def test_transcribe_audio_file_routes_openrouter_provider(audio_file: Path
         "api_base": "https://openrouter.ai/api/v1",
         "language": "en",
         "model": "nvidia/parakeet-tdt-0.6b-v3",
+        "file_path": audio_file,
+    }
+
+
+@pytest.mark.asyncio
+async def test_transcribe_audio_file_routes_dashscope_provider(audio_file: Path) -> None:
+    captured: dict[str, object] = {}
+
+    class StubDashScope:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def transcribe(self, file_path: str | Path) -> str:
+            captured["file_path"] = Path(file_path)
+            return "dashscope ok"
+
+    config = EffectiveTranscriptionConfig(
+        enabled=True,
+        provider="dashscope",
+        model="qwen3-asr-flash",
+        language="zh",
+        api_key="dashscope-test",
+        api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        max_duration_sec=120,
+        max_upload_mb=25,
+    )
+
+    with patch("nanobot.providers.transcription.DashScopeTranscriptionProvider", StubDashScope):
+        result = await transcribe_audio_file(audio_file, config)
+
+    assert result == "dashscope ok"
+    assert captured == {
+        "api_key": "dashscope-test",
+        "api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "language": "zh",
+        "model": "qwen3-asr-flash",
         "file_path": audio_file,
     }
 
@@ -713,6 +773,61 @@ def test_xiaomi_mimo_defaults_and_base_normalization() -> None:
     )
     assert custom.api_url == "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions"
     assert custom.model == "custom-asr"
+
+
+def test_dashscope_defaults_and_base_normalization() -> None:
+    provider = DashScopeTranscriptionProvider(api_key="k")
+    assert provider.api_url == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    assert provider.model == "qwen3-asr-flash"
+
+    custom = DashScopeTranscriptionProvider(
+        api_key="k",
+        api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model="qwen3-asr-plus",
+    )
+    assert custom.api_url == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    assert custom.model == "qwen3-asr-plus"
+
+
+@pytest.mark.asyncio
+async def test_dashscope_sends_chat_completion_audio_payload(audio_file: Path) -> None:
+    provider = DashScopeTranscriptionProvider(api_key="k", language="zh")
+    post = AsyncMock(
+        return_value=_response(
+            200,
+            {"choices": [{"message": {"content": "hello from qwen asr"}}]},
+        )
+    )
+
+    with patch("httpx.AsyncClient.post", post), patch("asyncio.sleep", AsyncMock()):
+        assert await provider.transcribe(audio_file) == "hello from qwen asr"
+
+    call = post.await_args_list[0].kwargs
+    assert "files" not in call
+    body = call["json"]
+    assert body["model"] == "qwen3-asr-flash"
+    assert body["messages"][0]["content"][0]["type"] == "text"
+    assert "Language hint: zh." in body["messages"][0]["content"][0]["text"]
+    audio = body["messages"][0]["content"][1]["input_audio"]["data"]
+    assert audio.startswith("data:audio/ogg;base64,")
+    assert body["messages"][0]["content"][1]["input_audio"]["format"] == "ogg"
+    assert base64.b64decode(audio.split(",", 1)[1]) == audio_file.read_bytes()
+
+
+@pytest.mark.asyncio
+async def test_dashscope_shares_retry_contract(audio_file: Path) -> None:
+    provider = DashScopeTranscriptionProvider(api_key="k")
+    post = AsyncMock(
+        side_effect=[
+            _response(503),
+            _response(200, {"choices": [{"message": {"content": "ok"}}]}),
+        ]
+    )
+
+    with patch("httpx.AsyncClient.post", post), patch("asyncio.sleep", AsyncMock()):
+        assert await provider.transcribe(audio_file) == "ok"
+
+    assert post.await_count == 2
 
 
 @pytest.mark.asyncio

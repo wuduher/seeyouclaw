@@ -1,8 +1,8 @@
 # seeyouclaw Provider Setup
 
 This project keeps model providers replaceable. The first competition build uses
-DeepSeek through nanobot's existing `deepseek` OpenAI-compatible provider, and
-keeps the API key outside git.
+DeepSeek for chat generation and DashScope `Qwen3-ASR-Flash` for cloud speech
+transcription, while keeping secrets outside git.
 
 ## DeepSeek Flash Preset
 
@@ -52,8 +52,52 @@ Verify:
 
 ```powershell
 nanobot status
-nanobot agent -m "你好，用一句话介绍 seeyouclaw"
+nanobot agent -m "Say hello and introduce seeyouclaw in one sentence."
 ```
+
+## Qwen ASR Transcription
+
+Set the DashScope key in the terminal that starts nanobot.
+
+Windows PowerShell:
+
+```powershell
+$env:DASHSCOPE_API_KEY = "<your-dashscope-key>"
+```
+
+macOS / Linux:
+
+```bash
+export DASHSCOPE_API_KEY="<your-dashscope-key>"
+```
+
+Merge this snippet into `~/.nanobot/config.json`:
+
+```json
+{
+  "providers": {
+    "dashscope": {
+      "apiKey": "${DASHSCOPE_API_KEY}",
+      "apiBase": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    }
+  },
+  "transcription": {
+    "enabled": true,
+    "provider": "dashscope",
+    "model": "qwen3-asr-flash",
+    "language": "zh",
+    "maxDurationSec": 120,
+    "maxUploadMb": 25
+  }
+}
+```
+
+Notes:
+
+- `Qwen3-ASR-Flash` uses DashScope's OpenAI-compatible chat endpoint with
+  `input_audio`, not Whisper's `/audio/transcriptions` path.
+- When no cloud transcription provider is configured, WebUI can fall back to
+  browser speech recognition for a local demo path.
 
 ## WebUI Gateway
 
@@ -92,8 +136,9 @@ To switch to a different provider, change only:
 - `modelPresets.<preset>.provider`
 - `modelPresets.<preset>.model`
 - `agents.defaults.modelPreset`
+- `transcription.provider`
+- `transcription.model`
 
-DeepSeek is currently used as the low-latency text provider. For stronger visual
-understanding, add a vision-capable provider preset and route image-heavy turns
-to that preset in a later PR.
-
+DeepSeek is currently used as the low-latency text provider. DashScope Qwen ASR
+handles speech-to-text. For stronger visual understanding, add a vision-capable
+provider preset and route image-heavy turns to that preset in a later PR.

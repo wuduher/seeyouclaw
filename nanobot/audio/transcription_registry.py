@@ -59,6 +59,12 @@ TRANSCRIPTION_PROVIDERS: tuple[TranscriptionProviderSpec, ...] = (
         adapter="nanobot.providers.transcription:OpenRouterTranscriptionProvider",
     ),
     TranscriptionProviderSpec(
+        name="dashscope",
+        default_model="qwen3-asr-flash",
+        adapter="nanobot.providers.transcription:DashScopeTranscriptionProvider",
+        aliases=("qwen_asr", "qwen3_asr"),
+    ),
+    TranscriptionProviderSpec(
         name="xiaomi_mimo",
         default_model="mimo-v2.5-asr",
         adapter="nanobot.providers.transcription:XiaomiMiMoTranscriptionProvider",

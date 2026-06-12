@@ -66,6 +66,7 @@ import {
 } from "@/hooks/useAttachedImages";
 import { useClipboardAndDrop } from "@/hooks/useClipboardAndDrop";
 import type { SendImage, SendOptions } from "@/hooks/useNanobotStream";
+import { useSeeyouclawVision } from "@/hooks/seeyouclaw/useSeeyouclawVision";
 import { useVoiceRecorder, type VoiceRecorderErrorKey } from "@/hooks/useVoiceRecorder";
 import type {
   CliAppInfo,
@@ -83,6 +84,10 @@ import {
   providerBrand,
 } from "@/lib/provider-brand";
 import { cn } from "@/lib/utils";
+import {
+  SeeyouclawVisionButton,
+  SeeyouclawVisionPanel,
+} from "@/components/seeyouclaw/SeeyouclawVisionControl";
 
 /** ``<input accept>``: aligned with the server's MIME whitelist. SVG is
  * deliberately excluded to avoid an embedded-script XSS surface. */
@@ -865,12 +870,21 @@ export function ThreadComposer({
     [images],
   );
   const hasErrors = images.some((img) => img.status === "error");
+  const setVisionCaptureError = useCallback(() => {
+    setInlineError(t("thread.composer.camera.captureFailed", {
+      defaultValue: "Camera snapshot failed. Sending text only.",
+    }));
+  }, [t]);
+  const seeyouclawVision = useSeeyouclawVision({
+    onCaptureError: setVisionCaptureError,
+  });
 
   const hasComposerContent = value.trim().length > 0 || readyImages.length > 0;
   const canSend =
     !disabled
     && !modelNeedsSetup
     && !encoding
+    && !seeyouclawVision.capturing
     && !hasErrors
     && hasComposerContent;
   const canOpenModelSettings = Boolean(modelNeedsSetup && onModelBadgeClick && !disabled);
@@ -1368,7 +1382,7 @@ export function ThreadComposer({
     onStop?.();
   }, [onStop, queuedPrompts.length]);
 
-  const submit = useCallback(() => {
+  const submit = useCallback(async () => {
     if (modelNeedsSetup) {
       onModelBadgeClick?.();
       return;
@@ -1390,6 +1404,14 @@ export function ThreadComposer({
             preview: { url: img.dataUrl, name: img.file.name },
           }))
         : undefined;
+    const visionImage = await seeyouclawVision.prepareAttachment(
+      content,
+      payload?.length ?? 0,
+    );
+    const outboundPayload =
+      visionImage
+        ? [...(payload ?? []), visionImage]
+        : payload;
     const attachedCliApps = activeCliMentionApps.map(cliAppMentionPayload);
     const attachedMcpPresets = activeMcpPresetMentions.map(mcpPresetMentionPayload);
     const options: SendOptions | undefined =
@@ -1399,7 +1421,7 @@ export function ThreadComposer({
             ...(attachedMcpPresets.length > 0 ? { mcpPresets: attachedMcpPresets } : {}),
           }
         : undefined;
-    onSend(content, payload, options);
+    onSend(content, outboundPayload, options);
     setQueuedPrompts([]);
     // Bubble owns the data URL copy; safe to revoke every staged blob
     // preview here without affecting the rendered message.
@@ -1415,6 +1437,7 @@ export function ThreadComposer({
     onModelBadgeClick,
     onSend,
     readyImages,
+    seeyouclawVision,
     value,
   ]);
 
@@ -1473,7 +1496,7 @@ export function ThreadComposer({
         queueGuidancePrompt();
         return;
       }
-      submit();
+      void submit();
     }
   };
 
@@ -1555,7 +1578,7 @@ export function ThreadComposer({
       ref={formRef}
       onSubmit={(e) => {
         e.preventDefault();
-        submit();
+        void submit();
       }}
       onDragEnter={onDragEnter}
       onDragOver={onDragOver}
@@ -1621,6 +1644,7 @@ export function ThreadComposer({
             }}
           />
         ) : null}
+        <SeeyouclawVisionPanel vision={seeyouclawVision} />
         {images.length > 0 ? (
           <div
             className="flex flex-wrap gap-2 px-3 pt-3"
@@ -1728,6 +1752,11 @@ export function ThreadComposer({
             >
               <Plus className={cn(isHero ? "h-[18px] w-[18px]" : "h-4 w-4")} />
             </Button>
+            <SeeyouclawVisionButton
+              disabled={disabled}
+              isHero={isHero}
+              vision={seeyouclawVision}
+            />
             {voiceRecorder.isRecording ? (
               <VoiceRecordingMeter
                 ariaLabel={voiceRecordingStatusLabel}

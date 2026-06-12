@@ -23,8 +23,6 @@ import {
   ArrowUp,
   BookOpen,
   Brain,
-  Camera,
-  CameraOff,
   ChevronDown,
   ChevronUp,
   CircleHelp,
@@ -66,9 +64,9 @@ import {
   MAX_IMAGES_PER_MESSAGE,
   type RestoredReadyImage,
 } from "@/hooks/useAttachedImages";
-import { useCameraSnapshot } from "@/hooks/useCameraSnapshot";
 import { useClipboardAndDrop } from "@/hooks/useClipboardAndDrop";
 import type { SendImage, SendOptions } from "@/hooks/useNanobotStream";
+import { useSeeyouclawVision } from "@/hooks/seeyouclaw/useSeeyouclawVision";
 import { useVoiceRecorder, type VoiceRecorderErrorKey } from "@/hooks/useVoiceRecorder";
 import type {
   CliAppInfo,
@@ -85,19 +83,17 @@ import {
   logoFallbackUrls,
   providerBrand,
 } from "@/lib/provider-brand";
-import {
-  decideVisionRoute,
-  formatVisionRoute,
-  type VisionRouteDecision,
-} from "@/lib/seeyouclaw/visionRouter";
 import { cn } from "@/lib/utils";
+import {
+  SeeyouclawVisionButton,
+  SeeyouclawVisionPanel,
+} from "@/components/seeyouclaw/SeeyouclawVisionControl";
 
 /** ``<input accept>``: aligned with the server's MIME whitelist. SVG is
  * deliberately excluded to avoid an embedded-script XSS surface. */
 const ACCEPT_ATTR = "image/png,image/jpeg,image/webp,image/gif";
 const VOICE_SHORTCUT_CODE = "KeyD";
 const VOICE_SHORTCUT_ARIA = "Control+Shift+D";
-const VISION_CAPTURE_COOLDOWN_MS = 2_500;
 type VoiceShortcutPlatform = "apple" | "chromeos" | "linux" | "other" | "windows";
 
 function formatBytes(n: number): string {
@@ -785,9 +781,6 @@ export function ThreadComposer({
   const [cursorPosition, setCursorPosition] = useState(0);
   const [recentSlashCommands, setRecentSlashCommands] = useState<string[]>(() => readSlashRecents());
   const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([]);
-  const [cameraEnabled, setCameraEnabled] = useState(false);
-  const [visionCapturing, setVisionCapturing] = useState(false);
-  const [lastVisionRoute, setLastVisionRoute] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -799,8 +792,6 @@ export function ThreadComposer({
   const skipNextQueuedFlushRef = useRef(false);
   const skipQueuedPromptPersistRef = useRef(false);
   const voiceShortcutDownRef = useRef(false);
-  const visionCooldownUntilRef = useRef(0);
-  const camera = useCameraSnapshot();
   const isHero = variant === "hero";
   const voiceShortcutLabel = useMemo(getVoiceShortcutLabel, []);
   const queuedPromptStorageKey = useMemo(
@@ -872,14 +863,6 @@ export function ThreadComposer({
     return () => cancelAnimationFrame(id);
   }, [disabled]);
 
-  useEffect(() => {
-    if (!cameraEnabled) {
-      camera.stop();
-      return;
-    }
-    void camera.start();
-  }, [cameraEnabled, camera.start, camera.stop]);
-
   const readyImages = useMemo(
     () => images.filter((img): img is AttachedImage & { dataUrl: string } =>
       img.status === "ready" && typeof img.dataUrl === "string",
@@ -887,13 +870,21 @@ export function ThreadComposer({
     [images],
   );
   const hasErrors = images.some((img) => img.status === "error");
+  const setVisionCaptureError = useCallback(() => {
+    setInlineError(t("thread.composer.camera.captureFailed", {
+      defaultValue: "Camera snapshot failed. Sending text only.",
+    }));
+  }, [t]);
+  const seeyouclawVision = useSeeyouclawVision({
+    onCaptureError: setVisionCaptureError,
+  });
 
   const hasComposerContent = value.trim().length > 0 || readyImages.length > 0;
   const canSend =
     !disabled
     && !modelNeedsSetup
     && !encoding
-    && !visionCapturing
+    && !seeyouclawVision.capturing
     && !hasErrors
     && hasComposerContent;
   const canOpenModelSettings = Boolean(modelNeedsSetup && onModelBadgeClick && !disabled);
@@ -1391,59 +1382,6 @@ export function ThreadComposer({
     onStop?.();
   }, [onStop, queuedPrompts.length]);
 
-  const maybeCaptureVisionSnapshot = useCallback(async (
-    text: string,
-    attachedImageCount: number,
-  ): Promise<{ decision: VisionRouteDecision; image?: SendImage }> => {
-    const decision = decideVisionRoute(text, {
-      attachedImageCount,
-      cameraEnabled,
-      cooldownActive: Date.now() < visionCooldownUntilRef.current,
-      maxImagesPerTurn: MAX_IMAGES_PER_MESSAGE,
-    });
-
-    if (!decision.shouldCapture) {
-      if (decision.trigger !== "no_visual_need") {
-        setLastVisionRoute(formatVisionRoute(decision));
-      }
-      return { decision };
-    }
-
-    setVisionCapturing(true);
-    try {
-      const snapshot = await camera.capture();
-      visionCooldownUntilRef.current = Date.now() + VISION_CAPTURE_COOLDOWN_MS;
-      setLastVisionRoute(`${formatVisionRoute(decision)} - ${formatBytes(snapshot.bytes)}`);
-      return {
-        decision,
-        image: {
-          media: {
-            data_url: snapshot.dataUrl,
-            name: snapshot.name,
-          },
-          preview: {
-            url: snapshot.dataUrl,
-            name: snapshot.name,
-          },
-        },
-      };
-    } catch {
-      const fallback: VisionRouteDecision = {
-        level: "audio_only",
-        shouldCapture: false,
-        trigger: "camera_disabled",
-        reason: "camera capture failed",
-      };
-      setLastVisionRoute("Audio only: camera unavailable");
-      setInlineError(t("thread.composer.camera.captureFailed", {
-        defaultValue: "Camera snapshot failed. Sending text only.",
-      }));
-      return { decision: fallback };
-    } finally {
-      setVisionCapturing(false);
-    }
-  }, [camera.capture, cameraEnabled, t]);
-
   const submit = useCallback(async () => {
     if (modelNeedsSetup) {
       onModelBadgeClick?.();
@@ -1466,7 +1404,7 @@ export function ThreadComposer({
             preview: { url: img.dataUrl, name: img.file.name },
           }))
         : undefined;
-    const { image: visionImage } = await maybeCaptureVisionSnapshot(
+    const visionImage = await seeyouclawVision.prepareAttachment(
       content,
       payload?.length ?? 0,
     );
@@ -1496,10 +1434,10 @@ export function ThreadComposer({
     clear,
     clearComposerText,
     modelNeedsSetup,
-    maybeCaptureVisionSnapshot,
     onModelBadgeClick,
     onSend,
     readyImages,
+    seeyouclawVision,
     value,
   ]);
 
@@ -1605,26 +1543,7 @@ export function ThreadComposer({
     [removeChip],
   );
 
-  const toggleCamera = useCallback(() => {
-    setCameraEnabled((enabled) => !enabled);
-    setLastVisionRoute(null);
-    setInlineError(null);
-  }, []);
-
   const attachButtonDisabled = disabled || full;
-  const cameraButtonLabel = cameraEnabled
-    ? t("thread.composer.camera.off", { defaultValue: "Turn camera off" })
-    : t("thread.composer.camera.on", { defaultValue: "Turn camera on" });
-  const cameraStatusLabel = camera.error
-    ? t("thread.composer.camera.error", {
-        defaultValue: "Camera unavailable",
-      })
-    : camera.state === "starting"
-      ? t("thread.composer.camera.starting", { defaultValue: "Camera starting" })
-      : lastVisionRoute
-        ?? (cameraEnabled
-          ? t("thread.composer.camera.ready", { defaultValue: "Camera ready" })
-          : null);
   const showVoiceButton = Boolean(onTranscribeAudio);
   const voiceRecordingStatusLabel = t("thread.composer.voice.recordingStatus", {
     time: voiceRecorder.elapsedLabel,
@@ -1725,38 +1644,7 @@ export function ThreadComposer({
             }}
           />
         ) : null}
-        {cameraEnabled ? (
-          <div className="flex items-center gap-2 px-3 pt-3">
-            <div
-              className={cn(
-                "relative h-16 w-24 shrink-0 overflow-hidden rounded-md border border-border/65 bg-muted",
-                "shadow-[0_3px_12px_rgba(15,23,42,0.08)]",
-              )}
-            >
-              <video
-                ref={camera.videoRef}
-                autoPlay
-                muted
-                playsInline
-                className="h-full w-full object-cover"
-              />
-              {(camera.state === "starting" || visionCapturing) ? (
-                <div className="absolute inset-0 flex items-center justify-center bg-background/55">
-                  <Loader2 className="h-4 w-4 animate-spin text-foreground/70" aria-hidden />
-                </div>
-              ) : null}
-            </div>
-            <div className="min-w-0 flex-1">
-              {cameraStatusLabel ? (
-                <div className="truncate text-[12px] font-medium text-foreground/75">
-                  {cameraStatusLabel}
-                </div>
-              ) : null}
-            </div>
-          </div>
-        ) : (
-          <video ref={camera.videoRef} className="hidden" muted playsInline />
-        )}
+        <SeeyouclawVisionPanel vision={seeyouclawVision} />
         {images.length > 0 ? (
           <div
             className="flex flex-wrap gap-2 px-3 pt-3"
@@ -1864,28 +1752,11 @@ export function ThreadComposer({
             >
               <Plus className={cn(isHero ? "h-[18px] w-[18px]" : "h-4 w-4")} />
             </Button>
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              disabled={disabled || visionCapturing}
-              aria-label={cameraButtonLabel}
-              onClick={toggleCamera}
-              className={cn(
-                "rounded-full border border-transparent text-muted-foreground hover:bg-muted/65 hover:text-foreground",
-                isHero ? "h-8 w-8" : "h-9 w-9",
-                cameraEnabled &&
-                  "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 hover:text-emerald-800 dark:text-emerald-300 dark:hover:text-emerald-200",
-              )}
-            >
-              {visionCapturing ? (
-                <Loader2 className={cn(isHero ? "h-4 w-4" : "h-4 w-4", "animate-spin")} />
-              ) : cameraEnabled ? (
-                <CameraOff className={cn(isHero ? "h-4 w-4" : "h-4 w-4")} />
-              ) : (
-                <Camera className={cn(isHero ? "h-4 w-4" : "h-4 w-4")} />
-              )}
-            </Button>
+            <SeeyouclawVisionButton
+              disabled={disabled}
+              isHero={isHero}
+              vision={seeyouclawVision}
+            />
             {voiceRecorder.isRecording ? (
               <VoiceRecordingMeter
                 ariaLabel={voiceRecordingStatusLabel}

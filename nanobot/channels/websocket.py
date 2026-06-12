@@ -777,6 +777,9 @@ class WebSocketChannel(BaseChannel):
                     "enabled": True,
                     "aspect_ratio": aspect_ratio if isinstance(aspect_ratio, str) else None,
                 }
+            model_preset = envelope.get("model_preset")
+            if isinstance(model_preset, str) and model_preset.strip():
+                metadata["model_preset"] = model_preset.strip()
             if metadata.get("webui") is True and self.is_allowed(client_id):
                 self._transcripts.append_user_message(
                     cid,

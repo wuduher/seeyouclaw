@@ -17,6 +17,7 @@ import {
   installedCliAppsFromPayload,
   isCliAppsPayload,
 } from "@/lib/cli-app-events";
+import { supportsBrowserSpeechRecognition } from "@/lib/browserSpeechRecognition";
 import {
   MCP_PRESETS_CHANGED_EVENT,
   installedMcpPresetsFromPayload,
@@ -349,6 +350,30 @@ export function ThreadShell({
     () => toModelBadgeInfo(modelName, settings),
     [modelName, settings],
   );
+  const browserSpeechSupported = useMemo(
+    () => supportsBrowserSpeechRecognition(),
+    [],
+  );
+  const transcriptionSettings = settings?.transcription;
+  const transcriptionFeatureEnabled = transcriptionSettings?.enabled ?? true;
+  const cloudTranscriptionReady = Boolean(
+    transcriptionSettings?.enabled
+    && transcriptionSettings.provider_configured,
+  );
+  const preferBrowserSpeechFallback = Boolean(
+    browserSpeechSupported
+    && transcriptionFeatureEnabled
+    && !cloudTranscriptionReady,
+  );
+  const effectiveTranscribeAudio = cloudTranscriptionReady
+    ? transcribeAudio
+    : undefined;
+  const browserSpeechRecognition = preferBrowserSpeechFallback
+    ? {
+        enabled: true,
+        language: transcriptionSettings?.language ?? null,
+      }
+    : undefined;
   const modelBadgeLabel = modelBadge.needsSetup
     ? t("thread.composer.modelNotConfigured", { defaultValue: "Model not configured" })
     : modelBadge.label;
@@ -670,7 +695,8 @@ export function ThreadShell({
           cliApps={cliApps}
           mcpPresets={mcpPresets}
           onStop={stop}
-          onTranscribeAudio={transcribeAudio}
+          onTranscribeAudio={effectiveTranscribeAudio}
+          browserSpeechRecognition={browserSpeechRecognition}
           runStartedAt={runStartedAt}
           goalState={goalState}
           workspaceScope={workspaceScope}
@@ -701,7 +727,8 @@ export function ThreadShell({
           cliApps={cliApps}
           mcpPresets={mcpPresets}
           runStartedAt={runStartedAt}
-          onTranscribeAudio={transcribeAudio}
+          onTranscribeAudio={effectiveTranscribeAudio}
+          browserSpeechRecognition={browserSpeechRecognition}
           goalState={goalState}
           workspaceScope={workspaceScope}
           workspaceDefaultScope={workspaceDefaultScope}

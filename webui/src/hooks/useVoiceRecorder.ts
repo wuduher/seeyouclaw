@@ -6,6 +6,13 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 
+import {
+  getBrowserSpeechRecognitionConstructor,
+  type BrowserSpeechRecognition,
+  type BrowserSpeechRecognitionConfig,
+  type BrowserSpeechRecognitionEvent,
+} from "@/lib/browserSpeechRecognition";
+
 const VOICE_RECORDING_MAX_MS = 120_000;
 const VOICE_RECORDING_MIN_MS = 650;
 const VOICE_NO_INPUT_HINT_MS = 1_100;
@@ -37,6 +44,7 @@ export type VoiceRecorderErrorKey =
   | "unsupported";
 
 interface VoiceRecorderOptions {
+  browserSpeechRecognition?: BrowserSpeechRecognitionConfig;
   disabled?: boolean;
   onClearError: () => void;
   onError: (key: VoiceRecorderErrorKey) => void;
@@ -45,6 +53,7 @@ interface VoiceRecorderOptions {
 }
 
 export function useVoiceRecorder({
+  browserSpeechRecognition,
   disabled,
   onClearError,
   onError,
@@ -52,6 +61,7 @@ export function useVoiceRecorder({
   onTranscribeAudio,
 }: VoiceRecorderOptions) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const browserRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<VoiceAudioState | null>(null);
@@ -69,9 +79,14 @@ export function useVoiceRecorder({
   const peakLevelRef = useRef(0);
   const levelReliableRef = useRef(false);
   const noInputHintVisibleRef = useRef(false);
+  const browserFinalTranscriptRef = useRef("");
+  const browserInterimTranscriptRef = useRef("");
+  const browserFinalizeHandledRef = useRef(false);
   const [state, setState] = useState<VoiceRecorderState>("idle");
   const [elapsedMs, setElapsedMs] = useState(0);
   const [levels, setLevels] = useState<number[]>(VOICE_WAVEFORM_IDLE_LEVELS);
+  const browserSpeechMode = Boolean(browserSpeechRecognition?.enabled && !onTranscribeAudio);
+  const hasVoiceInput = Boolean(onTranscribeAudio || browserSpeechMode);
 
   const clearInputHintTimer = useCallback(() => clearTimer(inputHintTimerRef), []);
   const clearSuppressClickTimer = useCallback(() => clearTimer(suppressClickTimerRef), []);
@@ -93,6 +108,20 @@ export function useVoiceRecorder({
     audio.source.disconnect();
     audio.analyser.disconnect();
     void audio.context.close().catch(() => undefined);
+  }, []);
+
+  const abortBrowserRecognition = useCallback(() => {
+    const recognition = browserRecognitionRef.current;
+    browserRecognitionRef.current = null;
+    if (!recognition) return;
+    recognition.onend = null;
+    recognition.onerror = null;
+    recognition.onresult = null;
+    try {
+      recognition.abort();
+    } catch {
+      // ignore teardown failures from partially-started browser speech sessions
+    }
   }, []);
 
   const startWaveform = useCallback((stream: MediaStream) => {
@@ -153,19 +182,32 @@ export function useVoiceRecorder({
     clearInputHintTimer();
     clearTimer(maxTimerRef);
     stopWaveform();
+    abortBrowserRecognition();
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     mediaRecorderRef.current = null;
     startPendingRef.current = false;
     shortcutActiveRef.current = false;
     noInputHintVisibleRef.current = false;
-  }, [clearInputHintTimer, stopWaveform]);
+  }, [abortBrowserRecognition, clearInputHintTimer, stopWaveform]);
 
   const stopRecording = useCallback(() => {
+    const browserRecognition = browserRecognitionRef.current;
+    if (browserRecognition) {
+      setState("transcribing");
+      try {
+        browserRecognition.stop();
+      } catch {
+        cleanupRecording();
+        setState("idle");
+        onError("failed");
+      }
+      return;
+    }
     const recorder = mediaRecorderRef.current;
     if (!recorder || recorder.state === "inactive") return;
     recorder.stop();
-  }, []);
+  }, [cleanupRecording, onError]);
 
   const stopRecordingWhenReady = useCallback(() => {
     const recorder = mediaRecorderRef.current;
@@ -177,7 +219,118 @@ export function useVoiceRecorder({
   }, [stopRecording]);
 
   const startRecording = useCallback(async () => {
-    if (!onTranscribeAudio || state !== "idle" || startPendingRef.current) return;
+    if (!hasVoiceInput || state !== "idle" || startPendingRef.current) return;
+    if (browserSpeechMode) {
+      const SpeechRecognitionCtor = getBrowserSpeechRecognitionConstructor();
+      if (!SpeechRecognitionCtor) {
+        onError("unsupported");
+        return;
+      }
+      const recognition = new SpeechRecognitionCtor();
+      browserFinalizeHandledRef.current = false;
+      browserFinalTranscriptRef.current = "";
+      browserInterimTranscriptRef.current = "";
+      browserRecognitionRef.current = recognition;
+      startedAtRef.current = Date.now();
+      levelObservedRef.current = false;
+      peakLevelRef.current = 0;
+      levelReliableRef.current = false;
+      noInputHintVisibleRef.current = false;
+      setElapsedMs(0);
+      setLevels(VOICE_WAVEFORM_IDLE_LEVELS);
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang =
+        browserSpeechRecognition?.language?.trim()
+        || document.documentElement.lang
+        || "en-US";
+      recognition.onresult = (event: BrowserSpeechRecognitionEvent) => {
+        let interim = "";
+        for (let index = event.resultIndex; index < event.results.length; index += 1) {
+          const transcript = event.results[index]?.[0]?.transcript?.trim();
+          if (!transcript) continue;
+          levelObservedRef.current = true;
+          levelReliableRef.current = true;
+          peakLevelRef.current = 1;
+          clearInputHintTimer();
+          if (noInputHintVisibleRef.current) {
+            noInputHintVisibleRef.current = false;
+            onClearError();
+          }
+          if (event.results[index].isFinal) {
+            browserFinalTranscriptRef.current = [
+              browserFinalTranscriptRef.current,
+              transcript,
+            ].filter(Boolean).join(" ").trim();
+            interim = "";
+          } else {
+            interim = transcript;
+          }
+        }
+        browserInterimTranscriptRef.current = interim;
+      };
+      recognition.onerror = (event) => {
+        if (browserFinalizeHandledRef.current) return;
+        browserFinalizeHandledRef.current = true;
+        browserRecognitionRef.current = null;
+        const error = (event.error || "").toLowerCase();
+        cleanupRecording();
+        setState("idle");
+        if (error === "not-allowed" || error === "service-not-allowed") {
+          onError("permission");
+          return;
+        }
+        if (error === "no-speech" || error === "audio-capture") {
+          onError("noInput");
+          return;
+        }
+        onError("failed");
+      };
+      recognition.onend = () => {
+        if (browserFinalizeHandledRef.current) return;
+        browserFinalizeHandledRef.current = true;
+        browserRecognitionRef.current = null;
+        const durationMs = Math.max(0, Date.now() - startedAtRef.current);
+        const transcript = [
+          browserFinalTranscriptRef.current,
+          browserInterimTranscriptRef.current,
+        ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+        cleanupRecording();
+        if (durationMs < VOICE_RECORDING_MIN_MS) {
+          setState("idle");
+          onError("tooShort");
+          return;
+        }
+        if (!transcript) {
+          setState("idle");
+          onError("noInput");
+          return;
+        }
+        setState("idle");
+        onTranscript(transcript);
+      };
+      try {
+        recognition.start();
+      } catch {
+        browserRecognitionRef.current = null;
+        onError("unsupported");
+        return;
+      }
+      setState("recording");
+      onClearError();
+      maxTimerRef.current = setTimeout(stopRecording, VOICE_RECORDING_MAX_MS);
+      inputHintTimerRef.current = setTimeout(() => {
+        if (browserFinalizeHandledRef.current || browserFinalTranscriptRef.current) return;
+        noInputHintVisibleRef.current = true;
+        onError("noInput");
+      }, VOICE_NO_INPUT_HINT_MS);
+      return;
+    }
+    const transcribeAudio = onTranscribeAudio;
+    if (!transcribeAudio) {
+      onError("notConfigured");
+      return;
+    }
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
       onError("unsupported");
       return;
@@ -224,7 +377,7 @@ export function useVoiceRecorder({
         }
         setState("transcribing");
         void blobToDataUrl(new Blob(chunks, { type: mimeType }))
-          .then((dataUrl) => onTranscribeAudio(dataUrl, { durationMs }))
+          .then((dataUrl) => transcribeAudio(dataUrl, { durationMs }))
           .then(onTranscript)
           .catch((error) => onError(transcriptionErrorKey(error)))
           .finally(() => setState("idle"));
@@ -252,7 +405,11 @@ export function useVoiceRecorder({
       onError("permission");
     }
   }, [
+    browserSpeechMode,
+    browserSpeechRecognition?.language,
     cleanupRecording,
+    clearInputHintTimer,
+    hasVoiceInput,
     onClearError,
     onError,
     onTranscribeAudio,
@@ -273,7 +430,7 @@ export function useVoiceRecorder({
 
   const beginPress = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
-    if (!onTranscribeAudio || disabled || state !== "idle") return;
+    if (!hasVoiceInput || disabled || state !== "idle") return;
     clearTimer(holdTimerRef);
     try {
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -286,7 +443,7 @@ export function useVoiceRecorder({
       suppressNextClick();
       startRecordingWithDeferredStop();
     }, VOICE_HOLD_START_MS);
-  }, [disabled, onTranscribeAudio, startRecordingWithDeferredStop, state, suppressNextClick]);
+  }, [disabled, hasVoiceInput, startRecordingWithDeferredStop, state, suppressNextClick]);
 
   const endPress = useCallback(() => {
     const wasHoldRecording = holdActiveRef.current;
@@ -308,10 +465,10 @@ export function useVoiceRecorder({
   }, [clearSuppressClickTimer, startRecording, state, stopRecording]);
 
   const beginShortcutHold = useCallback(() => {
-    if (!onTranscribeAudio || disabled || state !== "idle" || shortcutActiveRef.current) return;
+    if (!hasVoiceInput || disabled || state !== "idle" || shortcutActiveRef.current) return;
     shortcutActiveRef.current = true;
     startRecordingWithDeferredStop();
-  }, [disabled, onTranscribeAudio, startRecordingWithDeferredStop, state]);
+  }, [disabled, hasVoiceInput, startRecordingWithDeferredStop, state]);
 
   const endShortcutHold = useCallback(() => {
     if (!shortcutActiveRef.current) return;

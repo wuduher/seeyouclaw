@@ -6,6 +6,7 @@ import type { SendImage } from "@/hooks/useNanobotStream";
 import {
   decideVisionRoute,
   formatVisionRoute,
+  type VisionRouteContext,
 } from "@/lib/seeyouclaw/visionRouter";
 
 const VISION_CAPTURE_COOLDOWN_MS = 2_500;
@@ -49,6 +50,7 @@ export function useSeeyouclawVision({
   const [capturing, setCapturing] = useState(false);
   const [lastRoute, setLastRoute] = useState<string | null>(null);
   const cooldownUntilRef = useRef(0);
+  const routeContextRef = useRef<VisionRouteContext | null>(null);
 
   useEffect(() => {
     if (!enabled) {
@@ -61,6 +63,7 @@ export function useSeeyouclawVision({
   const toggle = useCallback(() => {
     setEnabled((current) => !current);
     setLastRoute(null);
+    routeContextRef.current = null;
     onToggle?.();
   }, [onToggle]);
 
@@ -71,9 +74,11 @@ export function useSeeyouclawVision({
     const decision = decideVisionRoute(text, {
       attachedImageCount,
       cameraEnabled: enabled,
+      context: routeContextRef.current,
       cooldownActive: Date.now() < cooldownUntilRef.current,
       maxImagesPerTurn: MAX_IMAGES_PER_MESSAGE,
     });
+    routeContextRef.current = decision.nextContext;
 
     if (!decision.shouldCapture) {
       if (decision.trigger !== "no_visual_need") {

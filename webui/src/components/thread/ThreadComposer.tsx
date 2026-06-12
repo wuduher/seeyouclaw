@@ -870,13 +870,30 @@ export function ThreadComposer({
     [images],
   );
   const hasErrors = images.some((img) => img.status === "error");
+  const seeyouclawVisionLabels = useMemo(() => ({
+    audioOnlyCameraUnavailable: t("thread.composer.camera.audioOnlyUnavailable", {
+      defaultValue: "Audio only: camera unavailable",
+    }),
+    cameraReady: t("thread.composer.camera.ready", { defaultValue: "Camera ready" }),
+    cameraStarting: t("thread.composer.camera.starting", { defaultValue: "Camera starting" }),
+    cameraUnavailable: t("thread.composer.camera.error", {
+      defaultValue: "Camera unavailable",
+    }),
+    turnCameraOff: t("thread.composer.camera.off", { defaultValue: "Turn camera off" }),
+    turnCameraOn: t("thread.composer.camera.on", { defaultValue: "Turn camera on" }),
+  }), [t]);
   const setVisionCaptureError = useCallback(() => {
     setInlineError(t("thread.composer.camera.captureFailed", {
       defaultValue: "Camera snapshot failed. Sending text only.",
     }));
   }, [t]);
+  const clearVisionInlineError = useCallback(() => {
+    setInlineError(null);
+  }, []);
   const seeyouclawVision = useSeeyouclawVision({
+    labels: seeyouclawVisionLabels,
     onCaptureError: setVisionCaptureError,
+    onToggle: clearVisionInlineError,
   });
 
   const hasComposerContent = value.trim().length > 0 || readyImages.length > 0;

@@ -90,6 +90,10 @@ import {
   SeeyouclawVisionPanel,
 } from "@/components/seeyouclaw/SeeyouclawVisionControl";
 import { SEEYOUCLAW_VISION_MODEL_PRESET } from "@/lib/seeyouclaw/modelRouting";
+import type {
+  SeeyouclawVisionRouteRequest,
+  SeeyouclawVisionRouteResponse,
+} from "@/lib/seeyouclaw/visionRouter";
 
 /** ``<input accept>``: aligned with the server's MIME whitelist. SVG is
  * deliberately excluded to avoid an embedded-script XSS surface. */
@@ -168,6 +172,9 @@ interface ThreadComposerProps {
   mcpPresets?: McpPresetInfo[];
   onStop?: () => void;
   onTranscribeAudio?: (dataUrl: string, options?: { durationMs?: number }) => Promise<string>;
+  onRouteVisionIntent?: (
+    payload: SeeyouclawVisionRouteRequest,
+  ) => Promise<SeeyouclawVisionRouteResponse>;
   browserSpeechRecognition?: BrowserSpeechRecognitionConfig;
   /** Unix seconds from server; turn elapsed timer above input while set. */
   runStartedAt?: number | null;
@@ -764,6 +771,7 @@ export function ThreadComposer({
   mcpPresets = [],
   onStop,
   onTranscribeAudio,
+  onRouteVisionIntent,
   browserSpeechRecognition,
   runStartedAt = null,
   goalState,
@@ -903,6 +911,7 @@ export function ThreadComposer({
   const seeyouclawVision = useSeeyouclawVision({
     labels: seeyouclawVisionLabels,
     onCaptureError: setVisionCaptureError,
+    onRouteVisionIntent,
     onToggle: clearVisionInlineError,
   });
 

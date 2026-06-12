@@ -33,6 +33,10 @@ Implemented in the first pass:
   appearance, screen, scene, and emotion, so follow-ups like `now?`, `this
   color?`, or `this line?` can still route to vision without repeating the full
   visual intent.
+- A DeepSeek Flash-assisted router runs only after the local router returns
+  `no_visual_need`. It catches broader object-attribute questions such as
+  `my chair color`, stronger emotion shifts, and semantic-slot follow-ups
+  without hard-coding every object noun.
 - Triggered snapshots are appended to the existing WebSocket image attachment
   payload, so no protocol fork is needed.
 - Router unit tests cover audio-only, visual trigger, disabled camera, image
@@ -63,7 +67,9 @@ Deferred after the stable loop:
 flowchart LR
   U["User voice/text"] --> C["WebUI Composer"]
   Cam["Local camera stream"] --> Snap["On-demand snapshot"]
-  C --> R["seeyouclaw Vision Router"]
+  C --> R["Local Vision Router"]
+  R -->|"uncertain"| LR["DeepSeek Flash Router"]
+  LR --> R
   R -->|"audio_only"| WS["nanobot WebSocket"]
   R -->|"vision_snapshot"| Snap
   Snap --> WS
@@ -81,6 +87,9 @@ Important boundaries:
   depend on one vendor.
 - The router is a pure TypeScript module, ready to be replaced by a small intent
   classifier if rules are not enough.
+- The LLM router is a protected WebUI API and never writes into the chat
+  transcript. If it times out or returns malformed JSON, the composer falls back
+  to the local route.
 - New code lives under `webui/src/lib/seeyouclaw`,
   `webui/src/hooks/seeyouclaw`, and `webui/src/components/seeyouclaw` where
   possible. Existing nanobot components keep thin integration points only.
@@ -109,6 +118,9 @@ Actually adopted in the first pass:
   or stress-cue triggers.
 - Short-lived semantic slots keep follow-up turns contextual without forcing
   continuous camera use.
+- DeepSeek Flash routing is only called for locally ambiguous text turns, so
+  obvious visual requests stay low-latency and ordinary turns avoid extra
+  provider calls.
 - Snapshot capture has a 2.5 second cooldown.
 - Existing `MAX_IMAGES_PER_MESSAGE` prevents runaway attachment uploads.
 - Manual attachments suppress redundant camera snapshots when no visual trigger

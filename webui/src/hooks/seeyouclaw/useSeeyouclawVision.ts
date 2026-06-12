@@ -6,7 +6,14 @@ import type { SendImage } from "@/hooks/useNanobotStream";
 import {
   decideVisionRoute,
   formatVisionRoute,
+  VISION_CONTEXT_TTL_MS,
+  type SeeyouclawVisionRouteRequest,
+  type SeeyouclawVisionRouteResponse,
   type VisionRouteContext,
+  type VisionRouteContextKind,
+  type VisionRouteDecision,
+  type VisionRouteLevel,
+  type VisionRouteTrigger,
 } from "@/lib/seeyouclaw/visionRouter";
 
 const VISION_CAPTURE_COOLDOWN_MS = 2_500;
@@ -27,6 +34,9 @@ interface UseSeeyouclawVisionOptions {
     turnCameraOn: string;
   }>;
   onCaptureError?: () => void;
+  onRouteVisionIntent?: (
+    payload: SeeyouclawVisionRouteRequest,
+  ) => Promise<SeeyouclawVisionRouteResponse>;
   onToggle?: () => void;
 }
 
@@ -39,9 +49,59 @@ const DEFAULT_LABELS = {
   turnCameraOn: "Turn camera on",
 };
 
+function normalizeRouteLevel(level: string | undefined): VisionRouteLevel {
+  if (level === "vision_burst") return "vision_burst";
+  if (level === "vision_snapshot") return "vision_snapshot";
+  return "audio_only";
+}
+
+function normalizeContextKind(kind: string | null | undefined): VisionRouteContextKind {
+  if (kind === "appearance" || kind === "emotion" || kind === "screen") return kind;
+  return "scene";
+}
+
+function triggerForRemoteDecision(
+  response: SeeyouclawVisionRouteResponse,
+): VisionRouteTrigger {
+  const intent = (response.intent ?? "").toLowerCase();
+  if (intent.includes("context")) return "contextual_followup";
+  if (intent.includes("emotion") || response.emotionEscalation === "high") return "emotion_shift";
+  return "llm_router";
+}
+
+function decisionFromRemoteRoute(
+  response: SeeyouclawVisionRouteResponse,
+  nowMs: number,
+): VisionRouteDecision | null {
+  if (!response.ok || !response.needVision) return null;
+  const level = normalizeRouteLevel(response.route);
+  if (level === "audio_only") return null;
+  const slot = response.slot ?? {};
+  const kind = normalizeContextKind(slot.kind);
+  const trigger = triggerForRemoteDecision(response);
+  const nextContext: VisionRouteContext = {
+    expiresAtMs: nowMs + VISION_CONTEXT_TTL_MS,
+    kind,
+    lastTrigger: trigger,
+    ...(slot.attribute ? { attribute: slot.attribute } : {}),
+    ...(response.confidence !== undefined ? { confidence: response.confidence } : {}),
+    ...(slot.questionType ? { questionType: slot.questionType } : {}),
+    ...(slot.subject ? { subject: slot.subject } : {}),
+  };
+  return {
+    bypassCooldown: response.bypassCooldown,
+    level,
+    nextContext,
+    reason: response.reason?.trim() || "LLM vision route",
+    shouldCapture: true,
+    trigger,
+  };
+}
+
 export function useSeeyouclawVision({
   labels: labelOverrides,
   onCaptureError,
+  onRouteVisionIntent,
   onToggle,
 }: UseSeeyouclawVisionOptions = {}) {
   const camera = useCameraSnapshot();
@@ -71,13 +131,40 @@ export function useSeeyouclawVision({
     text: string,
     attachedImageCount: number,
   ): Promise<SendImage | undefined> => {
-    const decision = decideVisionRoute(text, {
+    const cooldownActive = Date.now() < cooldownUntilRef.current;
+    let decision = decideVisionRoute(text, {
       attachedImageCount,
       cameraEnabled: enabled,
       context: routeContextRef.current,
-      cooldownActive: Date.now() < cooldownUntilRef.current,
+      cooldownActive,
       maxImagesPerTurn: MAX_IMAGES_PER_MESSAGE,
     });
+
+    if (
+      decision.trigger === "no_visual_need"
+      && enabled
+      && !cooldownActive
+      && attachedImageCount < MAX_IMAGES_PER_MESSAGE
+      && text.trim()
+      && onRouteVisionIntent
+    ) {
+      try {
+        const response = await onRouteVisionIntent({
+          attachedImageCount,
+          cameraEnabled: enabled,
+          context: decision.nextContext,
+          cooldownActive,
+          maxImagesPerTurn: MAX_IMAGES_PER_MESSAGE,
+          text,
+        });
+        decision = decisionFromRemoteRoute(response, Date.now()) ?? decision;
+      } catch {
+        decision = {
+          ...decision,
+          reason: "remote vision router unavailable",
+        };
+      }
+    }
     routeContextRef.current = decision.nextContext;
 
     if (!decision.shouldCapture) {
@@ -109,7 +196,13 @@ export function useSeeyouclawVision({
     } finally {
       setCapturing(false);
     }
-  }, [camera.capture, enabled, labels.audioOnlyCameraUnavailable, onCaptureError]);
+  }, [
+    camera.capture,
+    enabled,
+    labels.audioOnlyCameraUnavailable,
+    onCaptureError,
+    onRouteVisionIntent,
+  ]);
 
   const statusLabel = camera.error
     ? labels.cameraUnavailable

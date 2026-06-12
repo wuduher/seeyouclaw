@@ -22,9 +22,14 @@ import type {
   WebuiThreadPersistedPayload,
   WorkspaceScopePayload,
 } from "./types";
+import type {
+  SeeyouclawVisionRouteRequest,
+  SeeyouclawVisionRouteResponse,
+} from "./seeyouclaw/visionRouter";
 import { fetchWithTimeout } from "./http";
 
 const API_READ_TIMEOUT_MS = 20_000;
+const SEEYOUCLAW_VISION_ROUTE_TIMEOUT_MS = 3_000;
 
 export class ApiError extends Error {
   status: number;
@@ -33,6 +38,21 @@ export class ApiError extends Error {
     this.status = status;
     this.name = "ApiError";
   }
+}
+
+export async function fetchSeeyouclawVisionRoute(
+  token: string,
+  payload: SeeyouclawVisionRouteRequest,
+  base: string = "",
+): Promise<SeeyouclawVisionRouteResponse> {
+  const params = new URLSearchParams();
+  params.set("payload", JSON.stringify(payload));
+  return request<SeeyouclawVisionRouteResponse>(
+    `${base}/api/seeyouclaw/vision-route?${params.toString()}`,
+    token,
+    undefined,
+    SEEYOUCLAW_VISION_ROUTE_TIMEOUT_MS,
+  );
 }
 
 async function request<T>(

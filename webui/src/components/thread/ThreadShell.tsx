@@ -11,7 +11,13 @@ import { StreamErrorNotice } from "@/components/thread/StreamErrorNotice";
 import { ThreadViewport, type ThreadViewportHandle } from "@/components/thread/ThreadViewport";
 import { useNanobotStream, type SendImage, type SendOptions } from "@/hooks/useNanobotStream";
 import { useSessionHistory } from "@/hooks/useSessions";
-import { fetchCliApps, fetchMcpPresets, fetchSettings, listSlashCommands } from "@/lib/api";
+import {
+  fetchCliApps,
+  fetchMcpPresets,
+  fetchSeeyouclawVisionRoute,
+  fetchSettings,
+  listSlashCommands,
+} from "@/lib/api";
 import {
   CLI_APPS_CHANGED_EVENT,
   installedCliAppsFromPayload,
@@ -374,6 +380,11 @@ export function ThreadShell({
         language: transcriptionSettings?.language ?? null,
       }
     : undefined;
+  const routeSeeyouclawVisionIntent = useCallback(
+    (payload: Parameters<typeof fetchSeeyouclawVisionRoute>[1]) =>
+      fetchSeeyouclawVisionRoute(token, payload),
+    [token],
+  );
   const modelBadgeLabel = modelBadge.needsSetup
     ? t("thread.composer.modelNotConfigured", { defaultValue: "Model not configured" })
     : modelBadge.label;
@@ -696,6 +707,7 @@ export function ThreadShell({
           mcpPresets={mcpPresets}
           onStop={stop}
           onTranscribeAudio={effectiveTranscribeAudio}
+          onRouteVisionIntent={routeSeeyouclawVisionIntent}
           browserSpeechRecognition={browserSpeechRecognition}
           runStartedAt={runStartedAt}
           goalState={goalState}
@@ -728,6 +740,7 @@ export function ThreadShell({
           mcpPresets={mcpPresets}
           runStartedAt={runStartedAt}
           onTranscribeAudio={effectiveTranscribeAudio}
+          onRouteVisionIntent={routeSeeyouclawVisionIntent}
           browserSpeechRecognition={browserSpeechRecognition}
           goalState={goalState}
           workspaceScope={workspaceScope}

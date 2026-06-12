@@ -300,6 +300,24 @@ def test_settings_payload_exposes_openrouter_transcription_provider(
     assert providers["openrouter"]["configured"] is True
 
 
+def test_settings_payload_exposes_dashscope_transcription_provider(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.providers.dashscope.api_key = "dashscope-test"
+    save_config(config, config_path)
+    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+
+    payload = settings_payload()
+
+    providers = {provider["name"]: provider for provider in payload["transcription"]["providers"]}
+    assert providers["dashscope"]["label"] == "DashScope"
+    assert providers["dashscope"]["configured"] is True
+    assert providers["dashscope"]["default_api_base"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+
 def test_settings_payload_exposes_siliconflow_transcription_provider(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -436,6 +454,32 @@ def test_update_transcription_settings_accepts_openrouter(
     assert saved.transcription.provider == "openrouter"
     assert saved.transcription.model == "nvidia/parakeet-tdt-0.6b-v3"
     assert payload["transcription"]["provider"] == "openrouter"
+    assert payload["transcription"]["provider_configured"] is True
+
+
+def test_update_transcription_settings_accepts_dashscope(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.providers.dashscope.api_key = "dashscope-test"
+    save_config(config, config_path)
+    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+
+    payload = update_transcription_settings(
+        {
+            "provider": ["dashscope"],
+            "model": ["qwen3-asr-flash"],
+            "language": ["zh"],
+        }
+    )
+
+    saved = load_config(config_path)
+    assert saved.transcription.provider == "dashscope"
+    assert saved.transcription.model == "qwen3-asr-flash"
+    assert saved.transcription.language == "zh"
+    assert payload["transcription"]["provider"] == "dashscope"
     assert payload["transcription"]["provider_configured"] is True
 
 

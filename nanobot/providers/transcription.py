@@ -315,6 +315,64 @@ async def _post_xiaomi_mimo_asr_with_retry(
     return await _post_with_retry(build_request, provider_label, _text_from_chat_payload)
 
 
+async def _post_dashscope_qwen_asr_with_retry(
+    url: str,
+    *,
+    api_key: str | None,
+    path: Path,
+    model: str,
+    provider_label: str,
+    language: str | None = None,
+) -> str:
+    """POST audio to DashScope Qwen ASR's OpenAI-compatible chat endpoint."""
+    try:
+        data = path.read_bytes()
+    except OSError as e:
+        logger.exception("{} transcription error: cannot read audio file: {}", provider_label, e)
+        return ""
+
+    instruction = (
+        "Transcribe the provided audio verbatim and return plain text only. "
+        "Do not add commentary, labels, or formatting."
+    )
+    if language:
+        instruction = f"{instruction} Language hint: {language}."
+
+    body: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": instruction,
+                    },
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": (
+                                f"data:{_audio_mime_type(path)};base64,"
+                                f"{base64.b64encode(data).decode('ascii')}"
+                            ),
+                            "format": _audio_format(path),
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    def build_request() -> dict[str, Any]:
+        return {"url": url, "headers": headers, "json": body, "timeout": 60.0}
+
+    return await _post_with_retry(build_request, provider_label, _text_from_chat_payload)
+
+
 async def _post_stepfun_asr_with_retry(
     url: str,
     *,
@@ -745,6 +803,45 @@ class OpenRouterTranscriptionProvider:
             path=path,
             model=self.model,
             provider_label="OpenRouter",
+            language=self.language,
+        )
+
+
+class DashScopeTranscriptionProvider:
+    """Voice transcription provider using DashScope Qwen ASR."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        api_base: str | None = None,
+        language: str | None = None,
+        model: str | None = None,
+    ):
+        self.api_key = api_key or os.environ.get("DASHSCOPE_API_KEY")
+        self.api_url = _resolve_chat_completions_url(
+            api_base or os.environ.get("DASHSCOPE_API_BASE"),
+            "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        )
+        self.language = language or None
+        self.model = model or "qwen3-asr-flash"
+        logger.debug("DashScope transcription endpoint: {}", self.api_url)
+
+    async def transcribe(self, file_path: str | Path) -> str:
+        if not self.api_key:
+            logger.warning("DashScope API key not configured for transcription")
+            return ""
+
+        path = Path(file_path)
+        if not path.exists():
+            logger.error("Audio file not found: {}", file_path)
+            return ""
+
+        return await _post_dashscope_qwen_asr_with_retry(
+            self.api_url,
+            api_key=self.api_key,
+            path=path,
+            model=self.model,
+            provider_label="DashScope",
             language=self.language,
         )
 

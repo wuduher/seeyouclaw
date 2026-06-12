@@ -17,13 +17,34 @@ function formatBytes(n: number): string {
 }
 
 interface UseSeeyouclawVisionOptions {
+  labels?: Partial<{
+    audioOnlyCameraUnavailable: string;
+    cameraReady: string;
+    cameraStarting: string;
+    cameraUnavailable: string;
+    turnCameraOff: string;
+    turnCameraOn: string;
+  }>;
   onCaptureError?: () => void;
+  onToggle?: () => void;
 }
 
+const DEFAULT_LABELS = {
+  audioOnlyCameraUnavailable: "Audio only: camera unavailable",
+  cameraReady: "Camera ready",
+  cameraStarting: "Camera starting",
+  cameraUnavailable: "Camera unavailable",
+  turnCameraOff: "Turn camera off",
+  turnCameraOn: "Turn camera on",
+};
+
 export function useSeeyouclawVision({
+  labels: labelOverrides,
   onCaptureError,
+  onToggle,
 }: UseSeeyouclawVisionOptions = {}) {
   const camera = useCameraSnapshot();
+  const labels = { ...DEFAULT_LABELS, ...labelOverrides };
   const [enabled, setEnabled] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [lastRoute, setLastRoute] = useState<string | null>(null);
@@ -40,7 +61,8 @@ export function useSeeyouclawVision({
   const toggle = useCallback(() => {
     setEnabled((current) => !current);
     setLastRoute(null);
-  }, []);
+    onToggle?.();
+  }, [onToggle]);
 
   const prepareAttachment = useCallback(async (
     text: string,
@@ -76,22 +98,22 @@ export function useSeeyouclawVision({
         },
       };
     } catch {
-      setLastRoute("Audio only: camera unavailable");
+      setLastRoute(labels.audioOnlyCameraUnavailable);
       onCaptureError?.();
       return undefined;
     } finally {
       setCapturing(false);
     }
-  }, [camera.capture, enabled, onCaptureError]);
+  }, [camera.capture, enabled, labels.audioOnlyCameraUnavailable, onCaptureError]);
 
   const statusLabel = camera.error
-    ? "Camera unavailable"
+    ? labels.cameraUnavailable
     : camera.state === "starting"
-      ? "Camera starting"
-      : lastRoute ?? (enabled ? "Camera ready" : null);
+      ? labels.cameraStarting
+      : lastRoute ?? (enabled ? labels.cameraReady : null);
 
   return {
-    buttonLabel: enabled ? "Turn camera off" : "Turn camera on",
+    buttonLabel: enabled ? labels.turnCameraOff : labels.turnCameraOn,
     cameraError: camera.error,
     cameraState: camera.state,
     capturing,

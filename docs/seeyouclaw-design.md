@@ -32,7 +32,17 @@ Implemented in the first pass:
   payload, so no protocol fork is needed.
 - Router unit tests cover audio-only, visual trigger, disabled camera, image
   limit, and cooldown behavior.
+- Composer loop tests cover the first stable demo path: text-only turns stay
+  text-only, visual turns attach exactly one camera snapshot, and camera failure
+  falls back to a text turn with an inline notice.
 - DeepSeek Flash configuration is documented as a replaceable provider preset.
+
+Stable loop before intelligence:
+
+- The first demo loop must work with manual camera enablement, voice-to-text,
+  one routed snapshot, and a streamed model reply.
+- Profile, emotion routing, burst capture, and local scene-change detection stay
+  behind this baseline. They are useful only after the basic loop is reliable.
 
 Deferred after the stable loop:
 

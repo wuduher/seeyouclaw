@@ -374,7 +374,11 @@ export function ThreadShell({
   const effectiveTranscribeAudio = cloudTranscriptionReady
     ? transcribeAudio
     : undefined;
-  const browserSpeechRecognition = preferBrowserSpeechFallback
+  const browserSpeechRecognition = (
+    browserSpeechSupported
+    && transcriptionFeatureEnabled
+    && (preferBrowserSpeechFallback || cloudTranscriptionReady)
+  )
     ? {
         enabled: true,
         language: transcriptionSettings?.language ?? null,

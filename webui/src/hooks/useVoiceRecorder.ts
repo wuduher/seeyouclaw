@@ -12,6 +12,7 @@ import {
   type BrowserSpeechRecognitionConfig,
   type BrowserSpeechRecognitionEvent,
 } from "@/lib/browserSpeechRecognition";
+import { resolveHybridAsrText } from "@/hooks/seeyouclaw/useHybridAsrRecorder";
 
 const VOICE_RECORDING_MAX_MS = 120_000;
 const VOICE_RECORDING_MIN_MS = 650;
@@ -52,6 +53,14 @@ interface VoiceRecorderOptions {
   onTranscribeAudio?: (dataUrl: string, options?: { durationMs?: number }) => Promise<string>;
 }
 
+interface HybridFinalizeState {
+  blob: Blob | null;
+  browserDone: boolean;
+  browserText: string;
+  durationMs: number;
+  recorderDone: boolean;
+}
+
 export function useVoiceRecorder({
   browserSpeechRecognition,
   disabled,
@@ -82,11 +91,17 @@ export function useVoiceRecorder({
   const browserFinalTranscriptRef = useRef("");
   const browserInterimTranscriptRef = useRef("");
   const browserFinalizeHandledRef = useRef(false);
+  const hybridFinalizeRef = useRef<HybridFinalizeState | null>(null);
   const [state, setState] = useState<VoiceRecorderState>("idle");
   const [elapsedMs, setElapsedMs] = useState(0);
   const [levels, setLevels] = useState<number[]>(VOICE_WAVEFORM_IDLE_LEVELS);
-  const browserSpeechMode = Boolean(browserSpeechRecognition?.enabled && !onTranscribeAudio);
-  const hasVoiceInput = Boolean(onTranscribeAudio || browserSpeechMode);
+  const hybridSpeechMode = Boolean(
+    browserSpeechRecognition?.enabled && onTranscribeAudio,
+  );
+  const browserSpeechMode = Boolean(
+    browserSpeechRecognition?.enabled && !onTranscribeAudio,
+  );
+  const hasVoiceInput = Boolean(onTranscribeAudio || browserSpeechRecognition?.enabled);
 
   const clearInputHintTimer = useCallback(() => clearTimer(inputHintTimerRef), []);
   const clearSuppressClickTimer = useCallback(() => clearTimer(suppressClickTimerRef), []);
@@ -189,9 +204,201 @@ export function useVoiceRecorder({
     startPendingRef.current = false;
     shortcutActiveRef.current = false;
     noInputHintVisibleRef.current = false;
+    hybridFinalizeRef.current = null;
   }, [abortBrowserRecognition, clearInputHintTimer, stopWaveform]);
 
+  const combineBrowserTranscript = useCallback(() => (
+    [
+      browserFinalTranscriptRef.current,
+      browserInterimTranscriptRef.current,
+    ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim()
+  ), []);
+
+  const tryHybridFinalize = useCallback(async () => {
+    const pending = hybridFinalizeRef.current;
+    const transcribeAudio = onTranscribeAudio;
+    if (!pending || !pending.browserDone || !pending.recorderDone || !transcribeAudio) return;
+
+    hybridFinalizeRef.current = null;
+    const { blob, browserText, durationMs } = pending;
+
+    if (durationMs < VOICE_RECORDING_MIN_MS) {
+      cleanupRecording();
+      setState("idle");
+      onError("tooShort");
+      return;
+    }
+
+    if (!blob || blob.size === 0) {
+      cleanupRecording();
+      if (browserText) {
+        setState("idle");
+        onTranscript(browserText);
+        return;
+      }
+      setState("idle");
+      onError("noInput");
+      return;
+    }
+
+    setState("transcribing");
+    try {
+      const dataUrl = await blobToDataUrl(blob);
+      const resolved = await resolveHybridAsrText(
+        browserText,
+        () => transcribeAudio(dataUrl, { durationMs }),
+      );
+      cleanupRecording();
+      if (!resolved.text) {
+        setState("idle");
+        onError("noInput");
+        return;
+      }
+      onTranscript(resolved.text);
+    } catch (error) {
+      cleanupRecording();
+      onError(transcriptionErrorKey(error));
+    } finally {
+      setState("idle");
+    }
+  }, [cleanupRecording, onError, onTranscribeAudio, onTranscript]);
+
+  const markHybridBrowserDone = useCallback(() => {
+    const pending = hybridFinalizeRef.current;
+    if (!pending) return;
+    pending.browserText = combineBrowserTranscript();
+    pending.browserDone = true;
+    void tryHybridFinalize();
+  }, [combineBrowserTranscript, tryHybridFinalize]);
+
+  const markHybridRecorderDone = useCallback((blob: Blob | null, durationMs: number) => {
+    const pending = hybridFinalizeRef.current;
+    if (!pending) return;
+    pending.blob = blob;
+    pending.durationMs = durationMs;
+    pending.recorderDone = true;
+    void tryHybridFinalize();
+  }, [tryHybridFinalize]);
+
+  const bindBrowserRecognitionHandlers = useCallback((
+    recognition: BrowserSpeechRecognition,
+    mode: "browser" | "hybrid",
+  ) => {
+    recognition.onresult = (event: BrowserSpeechRecognitionEvent) => {
+      let interim = "";
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const transcript = event.results[index]?.[0]?.transcript?.trim();
+        if (!transcript) continue;
+        levelObservedRef.current = true;
+        levelReliableRef.current = true;
+        peakLevelRef.current = 1;
+        clearInputHintTimer();
+        if (noInputHintVisibleRef.current) {
+          noInputHintVisibleRef.current = false;
+          onClearError();
+        }
+        if (event.results[index].isFinal) {
+          browserFinalTranscriptRef.current = [
+            browserFinalTranscriptRef.current,
+            transcript,
+          ].filter(Boolean).join(" ").trim();
+          interim = "";
+        } else {
+          interim = transcript;
+        }
+      }
+      browserInterimTranscriptRef.current = interim;
+    };
+    recognition.onerror = (event) => {
+      if (browserFinalizeHandledRef.current) return;
+      if (mode === "hybrid") {
+        browserRecognitionRef.current = null;
+        markHybridBrowserDone();
+        return;
+      }
+      browserFinalizeHandledRef.current = true;
+      browserRecognitionRef.current = null;
+      const error = (event.error || "").toLowerCase();
+      cleanupRecording();
+      setState("idle");
+      if (error === "not-allowed" || error === "service-not-allowed") {
+        onError("permission");
+        return;
+      }
+      if (error === "no-speech" || error === "audio-capture") {
+        onError("noInput");
+        return;
+      }
+      onError("failed");
+    };
+    recognition.onend = () => {
+      if (browserFinalizeHandledRef.current) return;
+      if (mode === "hybrid") {
+        browserRecognitionRef.current = null;
+        markHybridBrowserDone();
+        return;
+      }
+      browserFinalizeHandledRef.current = true;
+      browserRecognitionRef.current = null;
+      const durationMs = Math.max(0, Date.now() - startedAtRef.current);
+      const transcript = combineBrowserTranscript();
+      cleanupRecording();
+      if (durationMs < VOICE_RECORDING_MIN_MS) {
+        setState("idle");
+        onError("tooShort");
+        return;
+      }
+      if (!transcript) {
+        setState("idle");
+        onError("noInput");
+        return;
+      }
+      setState("idle");
+      onTranscript(transcript);
+    };
+  }, [
+    cleanupRecording,
+    clearInputHintTimer,
+    combineBrowserTranscript,
+    markHybridBrowserDone,
+    onClearError,
+    onError,
+    onTranscript,
+  ]);
+
   const stopRecording = useCallback(() => {
+    if (hybridSpeechMode) {
+      if (!browserRecognitionRef.current && !mediaRecorderRef.current) return;
+      setState("transcribing");
+      hybridFinalizeRef.current = {
+        blob: null,
+        browserDone: false,
+        browserText: "",
+        durationMs: Math.max(0, Date.now() - startedAtRef.current),
+        recorderDone: false,
+      };
+      const recognition = browserRecognitionRef.current;
+      if (recognition) {
+        try {
+          recognition.stop();
+        } catch {
+          markHybridBrowserDone();
+        }
+      } else {
+        markHybridBrowserDone();
+      }
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== "inactive") {
+        try {
+          recorder.stop();
+        } catch {
+          markHybridRecorderDone(null, hybridFinalizeRef.current?.durationMs ?? 0);
+        }
+      } else {
+        markHybridRecorderDone(null, hybridFinalizeRef.current?.durationMs ?? 0);
+      }
+      return;
+    }
     const browserRecognition = browserRecognitionRef.current;
     if (browserRecognition) {
       setState("transcribing");
@@ -207,7 +414,7 @@ export function useVoiceRecorder({
     const recorder = mediaRecorderRef.current;
     if (!recorder || recorder.state === "inactive") return;
     recorder.stop();
-  }, [cleanupRecording, onError]);
+  }, [cleanupRecording, hybridSpeechMode, markHybridBrowserDone, markHybridRecorderDone, onError]);
 
   const stopRecordingWhenReady = useCallback(() => {
     const recorder = mediaRecorderRef.current;
@@ -244,71 +451,7 @@ export function useVoiceRecorder({
         browserSpeechRecognition?.language?.trim()
         || document.documentElement.lang
         || "en-US";
-      recognition.onresult = (event: BrowserSpeechRecognitionEvent) => {
-        let interim = "";
-        for (let index = event.resultIndex; index < event.results.length; index += 1) {
-          const transcript = event.results[index]?.[0]?.transcript?.trim();
-          if (!transcript) continue;
-          levelObservedRef.current = true;
-          levelReliableRef.current = true;
-          peakLevelRef.current = 1;
-          clearInputHintTimer();
-          if (noInputHintVisibleRef.current) {
-            noInputHintVisibleRef.current = false;
-            onClearError();
-          }
-          if (event.results[index].isFinal) {
-            browserFinalTranscriptRef.current = [
-              browserFinalTranscriptRef.current,
-              transcript,
-            ].filter(Boolean).join(" ").trim();
-            interim = "";
-          } else {
-            interim = transcript;
-          }
-        }
-        browserInterimTranscriptRef.current = interim;
-      };
-      recognition.onerror = (event) => {
-        if (browserFinalizeHandledRef.current) return;
-        browserFinalizeHandledRef.current = true;
-        browserRecognitionRef.current = null;
-        const error = (event.error || "").toLowerCase();
-        cleanupRecording();
-        setState("idle");
-        if (error === "not-allowed" || error === "service-not-allowed") {
-          onError("permission");
-          return;
-        }
-        if (error === "no-speech" || error === "audio-capture") {
-          onError("noInput");
-          return;
-        }
-        onError("failed");
-      };
-      recognition.onend = () => {
-        if (browserFinalizeHandledRef.current) return;
-        browserFinalizeHandledRef.current = true;
-        browserRecognitionRef.current = null;
-        const durationMs = Math.max(0, Date.now() - startedAtRef.current);
-        const transcript = [
-          browserFinalTranscriptRef.current,
-          browserInterimTranscriptRef.current,
-        ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
-        cleanupRecording();
-        if (durationMs < VOICE_RECORDING_MIN_MS) {
-          setState("idle");
-          onError("tooShort");
-          return;
-        }
-        if (!transcript) {
-          setState("idle");
-          onError("noInput");
-          return;
-        }
-        setState("idle");
-        onTranscript(transcript);
-      };
+      bindBrowserRecognitionHandlers(recognition, "browser");
       try {
         recognition.start();
       } catch {
@@ -335,6 +478,68 @@ export function useVoiceRecorder({
       onError("unsupported");
       return;
     }
+    if (hybridSpeechMode) {
+      const SpeechRecognitionCtor = getBrowserSpeechRecognitionConstructor();
+      if (!SpeechRecognitionCtor) {
+        onError("unsupported");
+        return;
+      }
+      startPendingRef.current = true;
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const recorder = new MediaRecorder(stream, mediaRecorderOptions());
+        const recognition = new SpeechRecognitionCtor();
+        chunksRef.current = [];
+        streamRef.current = stream;
+        mediaRecorderRef.current = recorder;
+        browserFinalizeHandledRef.current = false;
+        browserFinalTranscriptRef.current = "";
+        browserInterimTranscriptRef.current = "";
+        browserRecognitionRef.current = recognition;
+        startedAtRef.current = Date.now();
+        levelObservedRef.current = false;
+        peakLevelRef.current = 0;
+        levelReliableRef.current = false;
+        noInputHintVisibleRef.current = false;
+        setElapsedMs(0);
+        startWaveform(stream);
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang =
+          browserSpeechRecognition?.language?.trim()
+          || document.documentElement.lang
+          || "en-US";
+        bindBrowserRecognitionHandlers(recognition, "hybrid");
+        recorder.ondataavailable = (event) => {
+          if (event.data.size > 0) chunksRef.current.push(event.data);
+        };
+        recorder.onstop = () => {
+          const chunks = chunksRef.current.splice(0);
+          const durationMs = Math.max(0, Date.now() - startedAtRef.current);
+          const mimeType = recorder.mimeType || "audio/webm";
+          const blob = chunks.length > 0
+            ? new Blob(chunks, { type: mimeType })
+            : null;
+          mediaRecorderRef.current = null;
+          markHybridRecorderDone(blob, durationMs);
+        };
+        recognition.start();
+        recorder.start();
+        setState("recording");
+        onClearError();
+        maxTimerRef.current = setTimeout(stopRecording, VOICE_RECORDING_MAX_MS);
+        inputHintTimerRef.current = setTimeout(() => {
+          if (browserFinalTranscriptRef.current || browserInterimTranscriptRef.current) return;
+          noInputHintVisibleRef.current = true;
+          onError("noInput");
+        }, VOICE_NO_INPUT_HINT_MS);
+      } catch {
+        cleanupRecording();
+        setState("idle");
+        onError("permission");
+      }
+      return;
+    }
     startPendingRef.current = true;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -356,10 +561,6 @@ export function useVoiceRecorder({
         const chunks = chunksRef.current.splice(0);
         const durationMs = Math.max(0, Date.now() - startedAtRef.current);
         const mimeType = recorder.mimeType || "audio/webm";
-        const hasMeasuredSilence =
-          levelReliableRef.current
-          && levelObservedRef.current
-          && peakLevelRef.current < VOICE_MIN_LEVEL;
         cleanupRecording();
         if (chunks.length === 0) {
           setState("idle");
@@ -368,11 +569,6 @@ export function useVoiceRecorder({
         if (durationMs < VOICE_RECORDING_MIN_MS) {
           setState("idle");
           onError("tooShort");
-          return;
-        }
-        if (hasMeasuredSilence) {
-          setState("idle");
-          onError("noInput");
           return;
         }
         setState("transcribing");
@@ -386,30 +582,20 @@ export function useVoiceRecorder({
       setState("recording");
       onClearError();
       maxTimerRef.current = setTimeout(stopRecording, VOICE_RECORDING_MAX_MS);
-      inputHintTimerRef.current = setTimeout(() => {
-        const recording = mediaRecorderRef.current?.state === "recording";
-        if (
-          !recording
-          || !levelReliableRef.current
-          || !levelObservedRef.current
-          || peakLevelRef.current >= VOICE_MIN_LEVEL
-        ) {
-          return;
-        }
-        noInputHintVisibleRef.current = true;
-        onError("noInput");
-      }, VOICE_NO_INPUT_HINT_MS);
     } catch {
       cleanupRecording();
       setState("idle");
       onError("permission");
     }
   }, [
+    bindBrowserRecognitionHandlers,
     browserSpeechMode,
     browserSpeechRecognition?.language,
     cleanupRecording,
     clearInputHintTimer,
     hasVoiceInput,
+    hybridSpeechMode,
+    markHybridRecorderDone,
     onClearError,
     onError,
     onTranscribeAudio,
@@ -574,6 +760,8 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 function transcriptionErrorKey(error: unknown): VoiceRecorderErrorKey {
   const detail = error instanceof Error ? error.message : "";
   if (detail === "not_configured") return "notConfigured";
-  if (detail === "duration") return "tooLong";
+  if (detail === "duration" || detail === "size") return "tooLong";
+  if (detail === "empty") return "noInput";
+  if (detail === "mime") return "unsupported";
   return "failed";
 }

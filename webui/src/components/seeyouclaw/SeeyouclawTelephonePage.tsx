@@ -64,7 +64,10 @@ interface SeeyouclawTelephonePageProps {
 const CAPTURE_COOLDOWN_MS = 2_500;
 const TELEPHONE_VOICE = "Ethan";
 const TELEPHONE_AUDIO_MODEL = "qwen3-omni-flash";
-const MAX_SPOKEN_REPLY_CHARS = 1200;
+
+function normalizeSpokenText(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
 
 function latestAssistantMessage(messages: UIMessage[]): UIMessage | null {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -102,10 +105,6 @@ function remoteContext(response: SeeyouclawVisionRouteResponse): VisionRouteCont
     ...(slot.questionType ? { questionType: slot.questionType } : {}),
     ...(slot.subject ? { subject: slot.subject } : {}),
   };
-}
-
-function shortReply(text: string): string {
-  return text.replace(/\s+/g, " ").trim().slice(0, MAX_SPOKEN_REPLY_CHARS);
 }
 
 export function SeeyouclawTelephonePage({
@@ -148,7 +147,9 @@ export function SeeyouclawTelephonePage({
   const routeContextRef = useRef<VisionRouteContext | null>(null);
   const cooldownUntilRef = useRef(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const startListeningRef = useRef<() => void>(() => undefined);
+  const playAudioFinishRef = useRef<(() => void) | null>(null);
+  const stopAgentRef = useRef<() => void>(() => undefined);
+  const startListeningRef = useRef<(options?: { bargeIn?: boolean }) => void>(() => undefined);
 
   const canUseSpeechRecognition = useMemo(() => supportsBrowserSpeechRecognition(), []);
   const callMessages = useMemo(() => visibleCallMessages(messages), [messages]);
@@ -170,6 +171,10 @@ export function SeeyouclawTelephonePage({
       setSpeechLabel("Thinking");
     }
   }, [active, isStreaming]);
+
+  useEffect(() => {
+    stopAgentRef.current = stop;
+  }, [stop]);
 
   useEffect(() => {
     if (!active) {
@@ -198,17 +203,43 @@ export function SeeyouclawTelephonePage({
 
   const stopSpeech = useCallback(() => {
     speakingRef.current = false;
-    audioRef.current?.pause();
-    audioRef.current = null;
+    if (audioRef.current) {
+      audioRef.current.onended = null;
+      audioRef.current.onerror = null;
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    playAudioFinishRef.current?.();
+    playAudioFinishRef.current = null;
     window.speechSynthesis?.cancel();
   }, []);
+
+  const interruptAssistant = useCallback(() => {
+    if (!speakingRef.current && !isStreamingRef.current) return false;
+    stopSpeech();
+    stopAgentRef.current();
+    if (activeRef.current) {
+      setMode("listening");
+      setSpeechLabel("Listening");
+    }
+    return true;
+  }, [stopSpeech]);
 
   const playAudio = useCallback(async (dataUrl: string) => {
     await new Promise<void>((resolve, reject) => {
       const audio = new Audio(dataUrl);
       audioRef.current = audio;
-      audio.onended = () => resolve();
-      audio.onerror = () => reject(new Error("audio playback failed"));
+      const finish = () => {
+        if (audioRef.current === audio) audioRef.current = null;
+        playAudioFinishRef.current = null;
+        resolve();
+      };
+      playAudioFinishRef.current = finish;
+      audio.onended = finish;
+      audio.onerror = () => {
+        playAudioFinishRef.current = null;
+        reject(new Error("audio playback failed"));
+      };
       void audio.play().then(() => undefined, reject);
     });
   }, []);
@@ -230,10 +261,9 @@ export function SeeyouclawTelephonePage({
     });
   }, []);
 
-  const startListening = useCallback(() => {
-    if (!activeRef.current || micMutedRef.current || isStreamingRef.current || speakingRef.current) {
-      return;
-    }
+  const startListening = useCallback((options?: { bargeIn?: boolean }) => {
+    if (!activeRef.current || micMutedRef.current) return;
+    if (!options?.bargeIn && (isStreamingRef.current || speakingRef.current)) return;
     if (recognitionRef.current) return;
     const Recognition = getBrowserSpeechRecognitionConstructor();
     if (!Recognition) {
@@ -255,26 +285,33 @@ export function SeeyouclawTelephonePage({
         if (result.isFinal) finalText += transcript;
         else interim += transcript;
       }
-      setInterimTranscript(interim.trim());
+      const interimText = interim.trim();
+      setInterimTranscript(interimText);
       const normalized = finalText.trim();
+      if ((interimText || normalized) && (speakingRef.current || isStreamingRef.current)) {
+        interruptAssistant();
+      }
       if (!normalized) return;
       stopListening();
       setInterimTranscript("");
       setLastUserText(normalized);
       window.setTimeout(() => {
-        const event = new CustomEvent("seeyouclaw-telephone-final", {
+        const utteranceEvent = new CustomEvent("seeyouclaw-telephone-final", {
           detail: { text: normalized },
         });
-        window.dispatchEvent(event);
+        window.dispatchEvent(utteranceEvent);
       }, 0);
     };
     recognition.onerror = (event) => {
+      if (event.error === "aborted") return;
       setError(event.error || "Speech recognition error");
       setMode("error");
     };
     recognition.onend = () => {
       recognitionRef.current = null;
-      if (!activeRef.current || micMutedRef.current || isStreamingRef.current || speakingRef.current) {
+      if (!activeRef.current || micMutedRef.current) return;
+      if (isStreamingRef.current || speakingRef.current) {
+        window.setTimeout(() => startListeningRef.current({ bargeIn: true }), 350);
         return;
       }
       window.setTimeout(() => startListeningRef.current(), 350);
@@ -282,12 +319,14 @@ export function SeeyouclawTelephonePage({
     recognitionRef.current = recognition;
     try {
       recognition.start();
-      setMode("listening");
-      setSpeechLabel("Listening");
+      if (!options?.bargeIn) {
+        setMode("listening");
+        setSpeechLabel("Listening");
+      }
     } catch {
       recognitionRef.current = null;
     }
-  }, [stopListening]);
+  }, [interruptAssistant, stopListening]);
 
   useEffect(() => {
     startListeningRef.current = startListening;
@@ -377,7 +416,10 @@ export function SeeyouclawTelephonePage({
     send(
       text,
       image ? [image] : undefined,
-      image ? { modelPreset: SEEYOUCLAW_VISION_MODEL_PRESET } : undefined,
+      {
+        seeyouclawTelephone: true,
+        ...(image ? { modelPreset: SEEYOUCLAW_VISION_MODEL_PRESET } : {}),
+      },
     );
   }, [ensureChat, prepareVisionImage, send]);
 
@@ -391,12 +433,13 @@ export function SeeyouclawTelephonePage({
   }, [sendUtterance]);
 
   const speakAssistant = useCallback(async (text: string) => {
-    const spokenText = shortReply(text);
+    const spokenText = normalizeSpokenText(text);
     if (!spokenText) return;
     speakingRef.current = true;
     setMode("speaking");
     setSpeechLabel("Speaking");
     stopListening(true);
+    startListeningRef.current({ bargeIn: true });
     try {
       const cloud = await fetchSeeyouclawTelephoneSpeech(token, {
         text: spokenText,
@@ -418,9 +461,13 @@ export function SeeyouclawTelephonePage({
     } finally {
       speakingRef.current = false;
       audioRef.current = null;
-      if (activeRef.current && !micMutedRef.current) startListening();
+      playAudioFinishRef.current = null;
+      if (activeRef.current && !micMutedRef.current) {
+        stopListening(true);
+        startListeningRef.current();
+      }
     }
-  }, [playAudio, speakWithBrowser, startListening, stopListening, token]);
+  }, [playAudio, speakWithBrowser, stopListening, token]);
 
   useEffect(() => {
     if (!active || isStreaming || !assistant?.content.trim()) return;
@@ -481,13 +528,18 @@ export function SeeyouclawTelephonePage({
         setMode("muted");
         setSpeechLabel("Muted");
       } else if (activeRef.current) {
-        setMode("listening");
-        setSpeechLabel("Listening");
-        window.setTimeout(startListening, 100);
+        stopListening(true);
+        if (speakingRef.current || isStreamingRef.current) {
+          startListeningRef.current({ bargeIn: true });
+        } else {
+          setMode("listening");
+          setSpeechLabel("Listening");
+          window.setTimeout(() => startListeningRef.current(), 100);
+        }
       }
       return next;
     });
-  }, [startListening, stopListening]);
+  }, [stopListening]);
 
   useEffect(() => {
     return () => {
@@ -628,7 +680,7 @@ export function SeeyouclawTelephonePage({
                 variant="ghost"
                 size="icon"
                 aria-label="Reset audio"
-                onClick={stopSpeech}
+                onClick={interruptAssistant}
                 disabled={!active}
                 className="h-11 w-11 rounded-full bg-white/10 text-white hover:bg-white/20"
               >

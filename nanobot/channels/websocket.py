@@ -780,6 +780,8 @@ class WebSocketChannel(BaseChannel):
             model_preset = envelope.get("model_preset")
             if isinstance(model_preset, str) and model_preset.strip():
                 metadata["model_preset"] = model_preset.strip()
+            if envelope.get("seeyouclaw_telephone") is True:
+                metadata["seeyouclaw_telephone"] = True
             if metadata.get("webui") is True and self.is_allowed(client_id):
                 self._transcripts.append_user_message(
                     cid,

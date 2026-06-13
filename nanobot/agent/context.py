@@ -13,6 +13,7 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.apps.cli import utils as cli_app_utils
 from nanobot.bus.events import InboundMessage
 from nanobot.session.goal_state import goal_state_runtime_lines
+from nanobot.webui import seeyouclaw_mode
 from nanobot.utils.helpers import (
     current_time_str,
     detect_image_mime,
@@ -37,6 +38,7 @@ def runtime_lines(state: Any, msg: Any, workspace: Path, *, skip: bool = False) 
             connected_server_names=set(state._mcp_stacks),
             skip=skip,
         ),
+        *seeyouclaw_mode.runtime_lines(msg, skip=skip),
     ]
 
 

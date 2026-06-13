@@ -391,6 +391,7 @@ export class NanobotClient {
       modelPreset?: string;
       workspaceScope?: WorkspaceScopePayload | null;
       turnId?: string;
+      seeyouclawTelephone?: boolean;
     },
   ): void {
     this.knownChats.add(chatId);
@@ -405,6 +406,7 @@ export class NanobotClient {
       ...(options?.modelPreset ? { model_preset: options.modelPreset } : {}),
       ...(options?.workspaceScope ? { workspace_scope: options.workspaceScope } : {}),
       ...(options?.turnId ? { turn_id: options.turnId } : {}),
+      ...(options?.seeyouclawTelephone ? { seeyouclaw_telephone: true } : {}),
       webui: true,
     };
     this.queueSend(frame);

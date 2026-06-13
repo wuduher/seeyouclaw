@@ -911,4 +911,6 @@ export type Outbound =
       webui?: true;
       /** Telephone subpage: inject spoken-reply runtime hints server-side. */
       seeyouclaw_telephone?: true;
+      /** DeepTalk mode: inject proactive projectized exploration hints server-side. */
+      seeyouclaw_deeptalk?: true;
     };

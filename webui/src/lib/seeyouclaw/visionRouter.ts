@@ -308,7 +308,7 @@ export function decideVisionRoute(
     };
   }
 
-  let wanted: PendingVisionIntent | null = null;
+  let wanted: PendingVisionIntent | null;
   if (matchesAny(text, SCREEN_OR_OCR_PATTERNS)) {
     wanted = {
       level: "vision_snapshot",

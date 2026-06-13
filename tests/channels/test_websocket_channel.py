@@ -294,6 +294,8 @@ async def test_webui_message_envelope_marks_inbound_metadata(bus: MagicMock) -> 
             "content": "hello",
             "webui": True,
             "turn_id": "turn-1",
+            "seeyouclaw_telephone": True,
+            "seeyouclaw_deeptalk": True,
         },
     )
 
@@ -303,6 +305,8 @@ async def test_webui_message_envelope_marks_inbound_metadata(bus: MagicMock) -> 
     assert msg.metadata["webui"] is True
     assert msg.metadata["webui_turn_id"] == "turn-1"
     assert msg.metadata["_wants_stream"] is True
+    assert msg.metadata["seeyouclaw_telephone"] is True
+    assert msg.metadata["seeyouclaw_deeptalk"] is True
     lines = read_transcript_lines("websocket:chat-1")
     assert lines == [{
         "event": "user",

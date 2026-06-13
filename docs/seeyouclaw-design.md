@@ -19,6 +19,8 @@ Planned for the competition build:
   `Audio only` or `Vision snapshot`.
 - As a user, I can open a telephone-style subpage for a camera-on voice call
   experience while keeping the same nanobot chat context.
+- As a user, I can turn on DeepTalk during a video call for a more proactive,
+  projectized conversation about emotions, research ideas, or essays.
 - As a developer, I can replace the model provider without rewriting the camera
   or routing code.
 - As a demo presenter, I can explain which operating-cost controls are active.
@@ -42,6 +44,9 @@ Implemented in the first pass:
 - A `#/telephone` subpage provides a video-call surface with camera preview,
   browser speech recognition, nanobot-backed streaming replies, optional Qwen
   Omni audio playback, and browser speech synthesis fallback.
+- The telephone page includes a `DEEPTALK` toggle. DeepTalk turns each call turn
+  into an active exploration mode with an OpenSpec-inspired project frame:
+  `proposal.md`, `design.md`, `tasks.md`, and `specs/<topic>/spec.md`.
 - Triggered snapshots are appended to the existing WebSocket image attachment
   payload, so no protocol fork is needed.
 - Router unit tests cover audio-only, visual trigger, disabled camera, image
@@ -80,6 +85,7 @@ flowchart LR
   Snap --> WS
   WS --> Media["nanobot media persistence"]
   Media --> Context["Agent context builder"]
+  Tel["Telephone / DeepTalk metadata"] --> Context
   Context --> Provider["Replaceable LLM provider"]
   Provider --> Reply["Streaming assistant reply"]
   Reply --> TelAudio["Telephone audio playback"]
@@ -94,6 +100,9 @@ Important boundaries:
 - Telephone mode sends user utterances through the same WebSocket chat session,
   so existing context replay, memory consolidation, workspace scope, and tools
   continue to work.
+- DeepTalk is implemented as per-turn metadata and runtime context lines, not a
+  separate fork of the nanobot agent loop. This keeps it compatible with memory,
+  tools, and provider switching while making the mode easy to disable.
 - Qwen Omni telephone speech is a protected WebUI API that turns the final
   assistant text into audio. It is intentionally outside the main agent loop so
   it cannot fork memory or mutate conversation history.
@@ -146,6 +155,8 @@ Actually adopted in the first pass:
 - Telephone audio playback prefers Qwen Omni only after the assistant has
   produced a final text reply; if that call fails, browser speech synthesis
   keeps the conversation flowing.
+- DeepTalk is opt-in per call/turn, so ordinary conversations do not spend extra
+  tokens on projectized prompting.
 
 ## Two-Day PR Plan
 
@@ -178,3 +189,9 @@ PR 5: Telephone mode
 - Add a dedicated video-call subpage.
 - Reuse nanobot WebSocket sessions for context and memory compatibility.
 - Add Qwen Omni audio playback with browser speech fallback.
+
+PR 6: DeepTalk mode
+
+- Add a DeepTalk toggle to telephone mode.
+- Inject projectized explore/archive runtime guidance through message metadata.
+- Document the OpenSpec-inspired archive shape for a later file-writing PR.

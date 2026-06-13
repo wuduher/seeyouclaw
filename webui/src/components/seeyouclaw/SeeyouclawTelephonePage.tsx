@@ -6,6 +6,7 @@ import {
   useState,
 } from "react";
 import {
+  Brain,
   Mic,
   MicOff,
   PanelLeft,
@@ -152,6 +153,7 @@ export function SeeyouclawTelephonePage({
   const [cloudTranscriptionReady, setCloudTranscriptionReady] = useState(false);
   const [active, setActive] = useState(false);
   const [mode, setMode] = useState<TelephoneMode>("idle");
+  const [deepTalkEnabled, setDeepTalkEnabled] = useState(false);
   const [micMuted, setMicMuted] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");
   const [lastUserText, setLastUserText] = useState("");
@@ -190,6 +192,7 @@ export function SeeyouclawTelephonePage({
   const callMessages = useMemo(() => visibleCallMessages(messages), [messages]);
   const assistant = useMemo(() => latestAssistantMessage(messages), [messages]);
   const displayTitle = title?.trim() || "seeyouclaw telephone";
+  const callIdentity = deepTalkEnabled ? "deeptalk" : "seeyouclaw";
 
   useEffect(() => {
     activeRef.current = active;
@@ -508,10 +511,11 @@ export function SeeyouclawTelephonePage({
       image ? [image] : undefined,
       {
         seeyouclawTelephone: true,
+        ...(deepTalkEnabled ? { seeyouclawDeepTalk: true } : {}),
         ...(image ? { modelPreset: SEEYOUCLAW_VISION_MODEL_PRESET } : {}),
       },
     );
-  }, [ensureChat, prepareVisionImage, send]);
+  }, [deepTalkEnabled, ensureChat, prepareVisionImage, send]);
 
   useEffect(() => {
     const onFinal = (event: Event) => {
@@ -651,7 +655,7 @@ export function SeeyouclawTelephonePage({
     ? (streamError.kind === "message_too_big" ? "Message too large" : "Workspace rejected")
     : null;
   const statusText = error || streamErrorText || speechLabel;
-  const liveText = interimTranscript || lastUserText || "seeyouclaw";
+  const liveText = interimTranscript || lastUserText || callIdentity;
   const pulseActive = active && (mode === "listening" || mode === "speaking" || isStreaming);
   const ambientMotion = mode === "idle" || mode === "connecting" || mode === "muted";
   const levels = mode === "speaking"
@@ -727,8 +731,7 @@ export function SeeyouclawTelephonePage({
           <div className="absolute bottom-24 left-1/2 flex -translate-x-1/2 items-end gap-1 rounded-full border border-white/10 bg-black/35 px-4 py-3 backdrop-blur">
             {levels.map((height, index) => (
               <span
-                // eslint-disable-next-line react/no-array-index-key
-                key={index}
+                key={`${height}-${index}`}
                 className={cn(
                   "w-1.5 rounded-full bg-emerald-200/85 transition-all duration-300",
                   (pulseActive || ambientMotion) && "motion-safe:animate-pulse",
@@ -753,6 +756,22 @@ export function SeeyouclawTelephonePage({
                 className="h-11 w-11 rounded-full bg-white/10 text-white hover:bg-white/20"
               >
                 {micMuted ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                aria-label="Toggle DeepTalk mode"
+                aria-pressed={deepTalkEnabled}
+                onClick={() => setDeepTalkEnabled((current) => !current)}
+                className={cn(
+                  "h-11 min-w-[112px] rounded-full px-3 text-xs font-semibold text-white hover:bg-white/20",
+                  deepTalkEnabled
+                    ? "bg-sky-300 text-slate-950 hover:bg-sky-200"
+                    : "bg-white/10",
+                )}
+              >
+                <Brain className="mr-2 h-4 w-4" />
+                DEEPTALK
               </Button>
               {active ? (
                 <Button
@@ -793,9 +812,11 @@ export function SeeyouclawTelephonePage({
             <div className="flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-4">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <Video className="h-4 w-4 text-amber-200" />
-                <span>Telephone</span>
+                <span>{deepTalkEnabled ? "DeepTalk" : "Telephone"}</span>
               </div>
-              <span className="text-xs text-white/50">{chatId ? "Nanobot context" : "Standby"}</span>
+              <span className="text-xs text-white/50">
+                {chatId ? (deepTalkEnabled ? "Project context" : "Nanobot context") : "Standby"}
+              </span>
             </div>
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
               {callMessages.length === 0 ? (
@@ -814,7 +835,7 @@ export function SeeyouclawTelephonePage({
                     )}
                   >
                     <div className="mb-1 text-[11px] uppercase text-white/45">
-                      {message.role === "user" ? "You" : "seeyouclaw"}
+                      {message.role === "user" ? "You" : callIdentity}
                     </div>
                     <div className="line-clamp-5 whitespace-pre-wrap break-words">
                       {message.content}

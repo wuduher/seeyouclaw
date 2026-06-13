@@ -120,6 +120,38 @@ describe("SeeyouclawTelephonePage", () => {
     expect(screen.getByRole("button", { name: "Mute microphone" })).toBeDisabled();
   });
 
+  it("sends DeepTalk metadata when the mode toggle is enabled", async () => {
+    const onCreateChat = vi.fn(async () => "telephone-chat");
+    render(
+      <SeeyouclawTelephonePage
+        session={null}
+        title="Telephone"
+        onCreateChat={onCreateChat}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start call" }));
+    await waitFor(() => expect(cameraStart).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Toggle DeepTalk mode" }));
+    expect(screen.getByRole("button", { name: "Toggle DeepTalk mode" }))
+      .toHaveAttribute("aria-pressed", "true");
+
+    window.dispatchEvent(new CustomEvent("seeyouclaw-telephone-final", {
+      detail: { text: "我们深入聊聊这个科研想法" },
+    }));
+
+    await waitFor(() => expect(streamMock.send).toHaveBeenCalledTimes(1));
+    expect(streamMock.send).toHaveBeenCalledWith(
+      "我们深入聊聊这个科研想法",
+      undefined,
+      {
+        seeyouclawTelephone: true,
+        seeyouclawDeepTalk: true,
+      },
+    );
+  });
+
   it("rolls back the call controls when chat creation fails", async () => {
     const onCreateChat = vi.fn(async () => null);
     render(

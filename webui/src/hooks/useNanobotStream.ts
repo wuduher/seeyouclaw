@@ -425,6 +425,7 @@ export interface SendOptions {
   modelPreset?: string;
   workspaceScope?: WorkspaceScopePayload | null;
   seeyouclawTelephone?: boolean;
+  seeyouclawDeepTalk?: boolean;
 }
 
 export function useNanobotStream(

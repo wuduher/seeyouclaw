@@ -74,11 +74,23 @@ function normalizeSpokenText(text: string): string {
 function latestAssistantMessage(messages: UIMessage[]): UIMessage | null {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i];
-    if (message.role === "assistant" && message.kind !== "trace" && message.content.trim()) {
+    if (
+      message.role === "assistant"
+      && message.kind !== "trace"
+      && message.content.trim()
+      && !isTelephoneControlMessage(message.content)
+    ) {
       return message;
     }
   }
   return null;
+}
+
+function isTelephoneControlMessage(content: string): boolean {
+  const normalized = normalizeSpokenText(content).toLowerCase();
+  return normalized === "no active task to stop"
+    || normalized === "no active task to stop."
+    || /^stopped \d+ task\(s\)\.?$/.test(normalized);
 }
 
 function visibleCallMessages(messages: UIMessage[]): UIMessage[] {
@@ -87,6 +99,9 @@ function visibleCallMessages(messages: UIMessage[]): UIMessage[] {
       (message.role === "user" || message.role === "assistant")
       && message.kind !== "trace"
       && message.content.trim().length > 0,
+    )
+    .filter((message) =>
+      message.role !== "assistant" || !isTelephoneControlMessage(message.content),
     )
     .slice(-8);
 }
@@ -238,9 +253,10 @@ export function SeeyouclawTelephonePage({
   }, []);
 
   const interruptAssistant = useCallback(() => {
-    if (!speakingRef.current && !isStreamingRef.current) return false;
+    const shouldStopAgent = isStreamingRef.current;
+    if (!speakingRef.current && !shouldStopAgent) return false;
     stopSpeech();
-    stopAgentRef.current();
+    if (shouldStopAgent) stopAgentRef.current();
     if (activeRef.current) {
       setMode("listening");
       setSpeechLabel("Listening");

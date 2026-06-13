@@ -5,6 +5,13 @@ import { SeeyouclawTelephonePage } from "@/components/seeyouclaw/SeeyouclawTelep
 
 const cameraStart = vi.fn(async () => undefined);
 const cameraStop = vi.fn();
+const streamMock = vi.hoisted(() => ({
+  dismissStreamError: vi.fn(),
+  isStreaming: false,
+  messages: [] as Array<Record<string, unknown>>,
+  send: vi.fn(),
+  stop: vi.fn(),
+}));
 
 vi.mock("@/providers/ClientProvider", () => ({
   useClient: () => ({ token: "test-token" }),
@@ -19,12 +26,12 @@ vi.mock("@/hooks/useSessions", () => ({
 
 vi.mock("@/hooks/useNanobotStream", () => ({
   useNanobotStream: () => ({
-    messages: [],
-    isStreaming: false,
-    send: vi.fn(),
-    stop: vi.fn(),
+    messages: streamMock.messages,
+    isStreaming: streamMock.isStreaming,
+    send: streamMock.send,
+    stop: streamMock.stop,
     streamError: null,
-    dismissStreamError: vi.fn(),
+    dismissStreamError: streamMock.dismissStreamError,
   }),
 }));
 
@@ -41,6 +48,8 @@ vi.mock("@/hooks/seeyouclaw/useCameraSnapshot", () => ({
 
 afterEach(() => {
   vi.clearAllMocks();
+  streamMock.isStreaming = false;
+  streamMock.messages = [];
 });
 
 describe("SeeyouclawTelephonePage", () => {
@@ -106,5 +115,36 @@ describe("SeeyouclawTelephonePage", () => {
     });
     expect(cameraStart).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Start call" })).toBeEnabled();
+  });
+
+  it("hides stop control responses from the telephone transcript", async () => {
+    const onCreateChat = vi.fn(async () => "telephone-chat");
+    const { rerender } = render(
+      <SeeyouclawTelephonePage
+        session={null}
+        title="Telephone"
+        onCreateChat={onCreateChat}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start call" }));
+    await waitFor(() => expect(onCreateChat).toHaveBeenCalledTimes(1));
+
+    streamMock.messages = [
+      {
+        content: "No active task to stop.",
+        id: "stop-ack",
+        role: "assistant",
+      },
+    ];
+    rerender(
+      <SeeyouclawTelephonePage
+        session={null}
+        title="Telephone"
+        onCreateChat={onCreateChat}
+      />,
+    );
+
+    expect(screen.queryByText("No active task to stop.")).not.toBeInTheDocument();
   });
 });

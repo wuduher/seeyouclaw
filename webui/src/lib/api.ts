@@ -29,7 +29,7 @@ import type {
 import { fetchWithTimeout } from "./http";
 
 const API_READ_TIMEOUT_MS = 20_000;
-const SEEYOUCLAW_VISION_ROUTE_TIMEOUT_MS = 3_000;
+const SEEYOUCLAW_VISION_ROUTE_TIMEOUT_MS = 5_500;
 const SEEYOUCLAW_TELEPHONE_SPEECH_TIMEOUT_MS = 60_000;
 
 export class ApiError extends Error {

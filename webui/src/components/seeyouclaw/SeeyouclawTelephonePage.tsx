@@ -62,6 +62,8 @@ interface SeeyouclawTelephonePageProps {
 }
 
 const CAPTURE_COOLDOWN_MS = 2_500;
+const TELEPHONE_AUDIO_GRACE_MS = 800;
+const TELEPHONE_INTERIM_STABLE_MS = 750;
 const TELEPHONE_VOICE = "Ethan";
 const TELEPHONE_AUDIO_MODEL = "qwen3-omni-flash";
 
@@ -147,6 +149,8 @@ export function SeeyouclawTelephonePage({
   const routeContextRef = useRef<VisionRouteContext | null>(null);
   const cooldownUntilRef = useRef(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const interimCommitTimerRef = useRef<number | null>(null);
+  const lastCommittedUtteranceRef = useRef("");
   const playAudioFinishRef = useRef<(() => void) | null>(null);
   const stopAgentRef = useRef<() => void>(() => undefined);
   const startListeningRef = useRef<(options?: { bargeIn?: boolean }) => void>(() => undefined);
@@ -187,6 +191,10 @@ export function SeeyouclawTelephonePage({
   }, [active, camera.state]);
 
   const stopListening = useCallback((abort = false) => {
+    if (interimCommitTimerRef.current) {
+      window.clearTimeout(interimCommitTimerRef.current);
+      interimCommitTimerRef.current = null;
+    }
     const recognition = recognitionRef.current;
     recognitionRef.current = null;
     if (!recognition) return;
@@ -200,6 +208,21 @@ export function SeeyouclawTelephonePage({
       // ignore stale browser recognizers
     }
   }, []);
+
+  const dispatchUtterance = useCallback((text: string) => {
+    const normalized = normalizeSpokenText(text);
+    if (!normalized || normalized === lastCommittedUtteranceRef.current) return;
+    lastCommittedUtteranceRef.current = normalized;
+    window.setTimeout(() => {
+      lastCommittedUtteranceRef.current = "";
+    }, 4_000);
+    stopListening();
+    setInterimTranscript("");
+    setLastUserText(normalized);
+    window.dispatchEvent(new CustomEvent("seeyouclaw-telephone-final", {
+      detail: { text: normalized },
+    }));
+  }, [stopListening]);
 
   const stopSpeech = useCallback(() => {
     speakingRef.current = false;
@@ -291,16 +314,20 @@ export function SeeyouclawTelephonePage({
       if ((interimText || normalized) && (speakingRef.current || isStreamingRef.current)) {
         interruptAssistant();
       }
-      if (!normalized) return;
-      stopListening();
-      setInterimTranscript("");
-      setLastUserText(normalized);
-      window.setTimeout(() => {
-        const utteranceEvent = new CustomEvent("seeyouclaw-telephone-final", {
-          detail: { text: normalized },
-        });
-        window.dispatchEvent(utteranceEvent);
-      }, 0);
+      if (interimCommitTimerRef.current) {
+        window.clearTimeout(interimCommitTimerRef.current);
+        interimCommitTimerRef.current = null;
+      }
+      if (normalized) {
+        dispatchUtterance(normalized);
+        return;
+      }
+      if (interimText) {
+        interimCommitTimerRef.current = window.setTimeout(() => {
+          interimCommitTimerRef.current = null;
+          dispatchUtterance(interimText);
+        }, TELEPHONE_INTERIM_STABLE_MS);
+      }
     };
     recognition.onerror = (event) => {
       if (event.error === "aborted") return;
@@ -326,7 +353,7 @@ export function SeeyouclawTelephonePage({
     } catch {
       recognitionRef.current = null;
     }
-  }, [interruptAssistant, stopListening]);
+  }, [dispatchUtterance, interruptAssistant, stopListening]);
 
   useEffect(() => {
     startListeningRef.current = startListening;
@@ -441,13 +468,19 @@ export function SeeyouclawTelephonePage({
     stopListening(true);
     startListeningRef.current({ bargeIn: true });
     try {
-      const cloud = await fetchSeeyouclawTelephoneSpeech(token, {
+      const cloudPromise = fetchSeeyouclawTelephoneSpeech(token, {
         text: spokenText,
         model: TELEPHONE_AUDIO_MODEL,
         voice: TELEPHONE_VOICE,
         format: "wav",
-      });
-      if (cloud.ok && cloud.audioDataUrl) {
+      }).catch(() => null);
+      const cloud = await Promise.race([
+        cloudPromise,
+        new Promise<null>((resolve) => {
+          window.setTimeout(() => resolve(null), TELEPHONE_AUDIO_GRACE_MS);
+        }),
+      ]);
+      if (cloud?.ok && cloud.audioDataUrl) {
         await playAudio(cloud.audioDataUrl);
       } else {
         await speakWithBrowser(spokenText);

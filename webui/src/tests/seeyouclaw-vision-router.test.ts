@@ -46,6 +46,13 @@ describe("seeyouclaw vision router", () => {
     expect(decision.nextContext?.kind).toBe("appearance");
   });
 
+  it("leaves broad outfit feedback to the semantic router", () => {
+    const decision = decideVisionRoute("\u4f60\u89c9\u5f97\u6211\u4eca\u5929\u8fd9\u8eab\u600e\u4e48\u6837", BASE_OPTIONS);
+
+    expect(decision.shouldCapture).toBe(false);
+    expect(decision.trigger).toBe("no_visual_need");
+  });
+
   it("keeps an appearance slot for contextual follow-ups", () => {
     const context: VisionRouteContext = {
       expiresAtMs: 50_000,

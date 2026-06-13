@@ -31,6 +31,7 @@ import { fetchWithTimeout } from "./http";
 const API_READ_TIMEOUT_MS = 20_000;
 const SEEYOUCLAW_VISION_ROUTE_TIMEOUT_MS = 5_500;
 const SEEYOUCLAW_TELEPHONE_SPEECH_TIMEOUT_MS = 60_000;
+const SEEYOUCLAW_DEEPTALK_TIMEOUT_MS = 8_000;
 
 export class ApiError extends Error {
   status: number;
@@ -84,6 +85,93 @@ export async function fetchSeeyouclawTelephoneSpeech(
     token,
     undefined,
     SEEYOUCLAW_TELEPHONE_SPEECH_TIMEOUT_MS,
+  );
+}
+
+export interface SeeyouclawDeepTalkSummary {
+  current: string;
+  open_questions: string[];
+  tasks: string[];
+  why: string;
+}
+
+export interface SeeyouclawDeepTalkFiles {
+  design: string;
+  notes: string;
+  proposal: string;
+  spec: string;
+  tasks: string;
+}
+
+export interface SeeyouclawDeepTalkProject {
+  archiveCount: number;
+  chatId: string;
+  createdAt: string;
+  files: SeeyouclawDeepTalkFiles;
+  id: string;
+  path: string;
+  summary: SeeyouclawDeepTalkSummary;
+  title: string;
+  turnCount: number;
+  updatedAt: string;
+}
+
+export interface SeeyouclawDeepTalkResponse {
+  archivePath?: string;
+  ok: boolean;
+  project: SeeyouclawDeepTalkProject;
+}
+
+export async function ensureSeeyouclawDeepTalkProject(
+  token: string,
+  payload: { chatId: string; seedText?: string; title?: string },
+  base: string = "",
+): Promise<SeeyouclawDeepTalkResponse> {
+  return fetchSeeyouclawDeepTalk(token, "ensure", payload, base);
+}
+
+export async function updateSeeyouclawDeepTalkProject(
+  token: string,
+  payload: {
+    assistantText?: string;
+    chatId?: string;
+    projectId?: string;
+    userText?: string;
+  },
+  base: string = "",
+): Promise<SeeyouclawDeepTalkResponse> {
+  return fetchSeeyouclawDeepTalk(token, "update", payload, base);
+}
+
+export async function readSeeyouclawDeepTalkProject(
+  token: string,
+  payload: { chatId?: string; projectId?: string },
+  base: string = "",
+): Promise<SeeyouclawDeepTalkResponse> {
+  return fetchSeeyouclawDeepTalk(token, "read", payload, base);
+}
+
+export async function archiveSeeyouclawDeepTalkProject(
+  token: string,
+  payload: { chatId?: string; projectId?: string },
+  base: string = "",
+): Promise<SeeyouclawDeepTalkResponse> {
+  return fetchSeeyouclawDeepTalk(token, "archive", payload, base);
+}
+
+async function fetchSeeyouclawDeepTalk(
+  token: string,
+  action: "archive" | "ensure" | "read" | "update",
+  payload: Record<string, unknown>,
+  base: string,
+): Promise<SeeyouclawDeepTalkResponse> {
+  const params = new URLSearchParams();
+  params.set("payload", JSON.stringify(payload));
+  return request<SeeyouclawDeepTalkResponse>(
+    `${base}/api/seeyouclaw/deeptalk/${action}?${params.toString()}`,
+    token,
+    undefined,
+    SEEYOUCLAW_DEEPTALK_TIMEOUT_MS,
   );
 }
 

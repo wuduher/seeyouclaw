@@ -6,7 +6,11 @@ import {
   useState,
 } from "react";
 import {
+  Archive,
   Brain,
+  CircleHelp,
+  FolderKanban,
+  ListChecks,
   Mic,
   MicOff,
   PanelLeft,
@@ -25,9 +29,13 @@ import { useHybridAsrRecorder } from "@/hooks/seeyouclaw/useHybridAsrRecorder";
 import { useNanobotStream, type SendImage } from "@/hooks/useNanobotStream";
 import { useSessionHistory } from "@/hooks/useSessions";
 import {
+  archiveSeeyouclawDeepTalkProject,
+  ensureSeeyouclawDeepTalkProject,
   fetchSeeyouclawTelephoneSpeech,
   fetchSeeyouclawVisionRoute,
   fetchSettings,
+  updateSeeyouclawDeepTalkProject,
+  type SeeyouclawDeepTalkProject,
 } from "@/lib/api";
 import { supportsBrowserSpeechRecognition } from "@/lib/browserSpeechRecognition";
 import {
@@ -69,9 +77,16 @@ const TELEPHONE_AUDIO_GRACE_MS = 800;
 const TELEPHONE_INTERIM_STABLE_MS = 750;
 const TELEPHONE_VOICE = "Ethan";
 const TELEPHONE_AUDIO_MODEL = "qwen3-omni-flash";
+const DEEPTALK_SYNC_TEXT_LIMIT = 900;
 
 function normalizeSpokenText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
+}
+
+function compactDeepTalkText(text: string): string {
+  const normalized = normalizeSpokenText(text);
+  if (normalized.length <= DEEPTALK_SYNC_TEXT_LIMIT) return normalized;
+  return `${normalized.slice(0, DEEPTALK_SYNC_TEXT_LIMIT - 1).trim()}...`;
 }
 
 function latestAssistantMessage(messages: UIMessage[]): UIMessage | null {
@@ -154,6 +169,9 @@ export function SeeyouclawTelephonePage({
   const [active, setActive] = useState(false);
   const [mode, setMode] = useState<TelephoneMode>("idle");
   const [deepTalkEnabled, setDeepTalkEnabled] = useState(false);
+  const [deepTalkProject, setDeepTalkProject] = useState<SeeyouclawDeepTalkProject | null>(null);
+  const [deepTalkStatus, setDeepTalkStatus] = useState("Project standby");
+  const [deepTalkError, setDeepTalkError] = useState<string | null>(null);
   const [micMuted, setMicMuted] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");
   const [lastUserText, setLastUserText] = useState("");
@@ -173,6 +191,8 @@ export function SeeyouclawTelephonePage({
   const interimCommitTimerRef = useRef<number | null>(null);
   const lastCommittedUtteranceRef = useRef("");
   const playAudioFinishRef = useRef<(() => void) | null>(null);
+  const deepTalkProjectRef = useRef<SeeyouclawDeepTalkProject | null>(null);
+  const latestProjectAssistantIdRef = useRef<string | null>(null);
   const stopAgentRef = useRef<() => void>(() => undefined);
   const startListeningRef = useRef<(options?: { bargeIn?: boolean }) => void>(() => undefined);
   const isFinalizingUtteranceRef = useRef(false);
@@ -213,6 +233,10 @@ export function SeeyouclawTelephonePage({
   useEffect(() => {
     stopAgentRef.current = stop;
   }, [stop]);
+
+  useEffect(() => {
+    deepTalkProjectRef.current = deepTalkProject;
+  }, [deepTalkProject]);
 
   useEffect(() => {
     let cancelled = false;
@@ -499,12 +523,66 @@ export function SeeyouclawTelephonePage({
     return next;
   }, [chatId, onCreateChat, workspaceScope]);
 
+  const ensureDeepTalkProject = useCallback(async (
+    nextChatId: string,
+    seedText?: string,
+  ): Promise<SeeyouclawDeepTalkProject | null> => {
+    const current = deepTalkProjectRef.current;
+    if (current?.chatId === nextChatId) return current;
+    setDeepTalkStatus("Project syncing");
+    setDeepTalkError(null);
+    try {
+      const response = await ensureSeeyouclawDeepTalkProject(token, {
+        chatId: nextChatId,
+        title: displayTitle,
+        ...(seedText ? { seedText: compactDeepTalkText(seedText) } : {}),
+      });
+      setDeepTalkProject(response.project);
+      setDeepTalkStatus("Project live");
+      return response.project;
+    } catch {
+      setDeepTalkError("Project sync failed");
+      setDeepTalkStatus("Project offline");
+      return null;
+    }
+  }, [displayTitle, token]);
+
+  const updateDeepTalkProject = useCallback((payload: {
+    assistantText?: string;
+    chatId?: string;
+    projectId?: string;
+    userText?: string;
+  }) => {
+    const syncPayload = {
+      ...payload,
+      ...(payload.userText ? { userText: compactDeepTalkText(payload.userText) } : {}),
+      ...(payload.assistantText ? {
+        assistantText: compactDeepTalkText(payload.assistantText),
+      } : {}),
+    };
+    void updateSeeyouclawDeepTalkProject(token, syncPayload)
+      .then((response) => {
+        setDeepTalkProject(response.project);
+        setDeepTalkStatus("Project updated");
+        setDeepTalkError(null);
+      })
+      .catch(() => {
+        setDeepTalkError("Project update delayed");
+        setDeepTalkStatus("Project offline");
+      });
+  }, [token]);
+
   const sendUtterance = useCallback(async (text: string) => {
     if (!activeRef.current || isStreamingRef.current) return;
     const nextChatId = await ensureChat();
     if (!nextChatId) return;
     setMode("thinking");
     setSpeechLabel("Thinking");
+    if (deepTalkEnabled) {
+      void ensureDeepTalkProject(nextChatId, text).then((project) => {
+        if (project) updateDeepTalkProject({ projectId: project.id, userText: text });
+      });
+    }
     const image = await prepareVisionImage(text);
     send(
       text,
@@ -515,7 +593,14 @@ export function SeeyouclawTelephonePage({
         ...(image ? { modelPreset: SEEYOUCLAW_VISION_MODEL_PRESET } : {}),
       },
     );
-  }, [deepTalkEnabled, ensureChat, prepareVisionImage, send]);
+  }, [
+    deepTalkEnabled,
+    ensureChat,
+    ensureDeepTalkProject,
+    prepareVisionImage,
+    send,
+    updateDeepTalkProject,
+  ]);
 
   useEffect(() => {
     const onFinal = (event: Event) => {
@@ -576,6 +661,18 @@ export function SeeyouclawTelephonePage({
     void speakAssistant(assistant.content);
   }, [active, assistant?.content, assistant?.id, isStreaming, speakAssistant]);
 
+  useEffect(() => {
+    if (!deepTalkEnabled || !assistant?.content.trim()) return;
+    if (assistant.id === latestProjectAssistantIdRef.current) return;
+    const project = deepTalkProjectRef.current;
+    if (!project) return;
+    latestProjectAssistantIdRef.current = assistant.id;
+    updateDeepTalkProject({
+      assistantText: assistant.content,
+      projectId: project.id,
+    });
+  }, [assistant?.content, assistant?.id, deepTalkEnabled, updateDeepTalkProject]);
+
   const startCall = useCallback(async () => {
     dismissStreamError();
     setError(null);
@@ -590,6 +687,7 @@ export function SeeyouclawTelephonePage({
     }
     latestSpokenAssistantIdRef.current = assistant?.id ?? null;
     await camera.start();
+    if (deepTalkEnabled) void ensureDeepTalkProject(opened);
     if (canUseSpeechRecognition && !micMutedRef.current) startListening();
     else if (micMutedRef.current) {
       setMode("muted");
@@ -604,6 +702,8 @@ export function SeeyouclawTelephonePage({
     canUseSpeechRecognition,
     dismissStreamError,
     ensureChat,
+    ensureDeepTalkProject,
+    deepTalkEnabled,
     startListening,
   ]);
 
@@ -641,6 +741,33 @@ export function SeeyouclawTelephonePage({
       return next;
     });
   }, [stopListening]);
+
+  const toggleDeepTalk = useCallback(() => {
+    setDeepTalkEnabled((current) => {
+      const next = !current;
+      if (next) {
+        setDeepTalkStatus("Project standby");
+        setDeepTalkError(null);
+        if (chatId) void ensureDeepTalkProject(chatId);
+      }
+      return next;
+    });
+  }, [chatId, ensureDeepTalkProject]);
+
+  const archiveDeepTalk = useCallback(async () => {
+    const project = deepTalkProjectRef.current;
+    if (!project) return;
+    setDeepTalkStatus("Archiving");
+    setDeepTalkError(null);
+    try {
+      const response = await archiveSeeyouclawDeepTalkProject(token, { projectId: project.id });
+      setDeepTalkProject(response.project);
+      setDeepTalkStatus(response.archivePath ? "Archived snapshot" : "Archived");
+    } catch {
+      setDeepTalkError("Archive failed");
+      setDeepTalkStatus("Project offline");
+    }
+  }, [token]);
 
   useEffect(() => {
     return () => {
@@ -762,7 +889,7 @@ export function SeeyouclawTelephonePage({
                 variant="ghost"
                 aria-label="Toggle DeepTalk mode"
                 aria-pressed={deepTalkEnabled}
-                onClick={() => setDeepTalkEnabled((current) => !current)}
+                onClick={toggleDeepTalk}
                 className={cn(
                   "h-11 min-w-[112px] rounded-full px-3 text-xs font-semibold text-white hover:bg-white/20",
                   deepTalkEnabled
@@ -815,10 +942,99 @@ export function SeeyouclawTelephonePage({
                 <span>{deepTalkEnabled ? "DeepTalk" : "Telephone"}</span>
               </div>
               <span className="text-xs text-white/50">
-                {chatId ? (deepTalkEnabled ? "Project context" : "Nanobot context") : "Standby"}
+                {chatId ? (deepTalkEnabled ? deepTalkStatus : "Nanobot context") : "Standby"}
               </span>
             </div>
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
+              {deepTalkEnabled ? (
+                <div className="space-y-3 rounded-md border border-sky-300/20 bg-sky-300/[0.06] p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-xs font-semibold uppercase text-sky-100/80">
+                        <FolderKanban className="h-3.5 w-3.5" />
+                        Project
+                      </div>
+                      <div className="mt-1 truncate text-sm font-semibold text-white">
+                        {deepTalkProject?.title ?? displayTitle}
+                      </div>
+                      <div className="mt-0.5 truncate text-[11px] text-white/45">
+                        {deepTalkProject?.path ?? "Preparing workspace"}
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Archive DeepTalk project"
+                      onClick={archiveDeepTalk}
+                      disabled={!deepTalkProject}
+                      className="h-8 w-8 shrink-0 rounded-full bg-white/10 text-white hover:bg-white/20"
+                    >
+                      <Archive className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  {deepTalkError ? (
+                    <div className="rounded-md border border-red-300/20 bg-red-300/10 px-2 py-1.5 text-xs text-red-50">
+                      {deepTalkError}
+                    </div>
+                  ) : null}
+
+                  <div className="space-y-2 text-xs leading-5 text-white/75">
+                    <div className="border-t border-white/10 pt-2">
+                      <div className="mb-1 text-[11px] font-semibold uppercase text-white/45">
+                        Why
+                      </div>
+                      <div className="line-clamp-3 break-words">
+                        {deepTalkProject?.summary.why || "Waiting for a focused opening."}
+                      </div>
+                    </div>
+                    <div className="border-t border-white/10 pt-2">
+                      <div className="mb-1 text-[11px] font-semibold uppercase text-white/45">
+                        Current
+                      </div>
+                      <div className="line-clamp-3 break-words">
+                        {deepTalkProject?.summary.current || "No project turn synced yet."}
+                      </div>
+                    </div>
+                    <div className="border-t border-white/10 pt-2">
+                      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase text-white/45">
+                        <CircleHelp className="h-3 w-3" />
+                        Questions
+                      </div>
+                      <div className="space-y-1">
+                        {(deepTalkProject?.summary.open_questions?.slice(0, 3) ?? [
+                          "What concrete outcome should this DeepTalk produce?",
+                        ]).map((item) => (
+                          <div key={item} className="line-clamp-2 break-words">
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="border-t border-white/10 pt-2">
+                      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase text-white/45">
+                        <ListChecks className="h-3 w-3" />
+                        Tasks
+                      </div>
+                      <div className="space-y-1">
+                        {(deepTalkProject?.summary.tasks?.slice(0, 3) ?? [
+                          "Clarify the main question.",
+                        ]).map((item) => (
+                          <div key={item} className="line-clamp-2 break-words">
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between border-t border-white/10 pt-2 text-[11px] text-white/45">
+                    <span>{deepTalkProject?.turnCount ?? 0} turns</span>
+                    <span>{deepTalkProject?.archiveCount ?? 0} archives</span>
+                  </div>
+                </div>
+              ) : null}
               {callMessages.length === 0 ? (
                 <div className="rounded-md border border-white/10 bg-white/[0.04] px-3 py-3 text-sm text-white/55">
                   {canUseSpeechRecognition ? "Ready" : "Mic unavailable"}

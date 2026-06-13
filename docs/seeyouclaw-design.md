@@ -45,8 +45,9 @@ Implemented in the first pass:
   browser speech recognition, nanobot-backed streaming replies, optional Qwen
   Omni audio playback, and browser speech synthesis fallback.
 - The telephone page includes a `DEEPTALK` toggle. DeepTalk turns each call turn
-  into an active exploration mode with an OpenSpec-inspired project frame:
-  `proposal.md`, `design.md`, `tasks.md`, and `specs/<topic>/spec.md`.
+  into an active exploration mode and maintains a parallel OpenSpec-inspired
+  project sidecar with `proposal.md`, `design.md`, `tasks.md`,
+  `specs/main/spec.md`, `notes.md`, and archive snapshots.
 - Triggered snapshots are appended to the existing WebSocket image attachment
   payload, so no protocol fork is needed.
 - Router unit tests cover audio-only, visual trigger, disabled camera, image
@@ -89,6 +90,8 @@ flowchart LR
   Context --> Provider["Replaceable LLM provider"]
   Provider --> Reply["Streaming assistant reply"]
   Reply --> TelAudio["Telephone audio playback"]
+  Tel --> Project["DeepTalk project sidecar"]
+  Project --> Files["OpenSpec-style files"]
 ```
 
 Important boundaries:
@@ -101,11 +104,15 @@ Important boundaries:
   so existing context replay, memory consolidation, workspace scope, and tools
   continue to work.
 - DeepTalk is implemented as per-turn metadata and runtime context lines, not a
-  separate fork of the nanobot agent loop. This keeps it compatible with memory,
-  tools, and provider switching while making the mode easy to disable.
+  separate fork of the nanobot agent loop. A deterministic sidecar stores the
+  project frame on disk, while nanobot remains responsible for live reasoning,
+  memory, tools, and provider switching.
 - Qwen Omni telephone speech is a protected WebUI API that turns the final
   assistant text into audio. It is intentionally outside the main agent loop so
   it cannot fork memory or mutate conversation history.
+- DeepTalk project APIs are protected WebUI endpoints. They update only compact
+  turn snippets, keeping the telephone loop responsive and avoiding extra cloud
+  model calls.
 - The router is a pure TypeScript module, ready to be replaced by a small intent
   classifier if rules are not enough.
 - The LLM router is a protected WebUI API and never writes into the chat
@@ -157,6 +164,8 @@ Actually adopted in the first pass:
   keeps the conversation flowing.
 - DeepTalk is opt-in per call/turn, so ordinary conversations do not spend extra
   tokens on projectized prompting.
+- The first DeepTalk project store is deterministic and local, so project-panel
+  updates do not add a second LLM call to every spoken turn.
 
 ## Two-Day PR Plan
 
@@ -194,4 +203,5 @@ PR 6: DeepTalk mode
 
 - Add a DeepTalk toggle to telephone mode.
 - Inject projectized explore/archive runtime guidance through message metadata.
-- Document the OpenSpec-inspired archive shape for a later file-writing PR.
+- Add a lightweight project sidecar and sidebar panel for OpenSpec-inspired
+  files, live questions, tasks, and archive snapshots.

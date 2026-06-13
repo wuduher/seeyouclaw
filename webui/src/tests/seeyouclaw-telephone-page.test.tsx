@@ -13,6 +13,46 @@ const streamMock = vi.hoisted(() => ({
   stop: vi.fn(),
   transcribeAudio: vi.fn(async () => "cloud transcript"),
 }));
+const deepTalkApiMock = vi.hoisted(() => {
+  const project = (overrides: Record<string, unknown> = {}) => ({
+    archiveCount: 0,
+    chatId: "telephone-chat",
+    createdAt: "2026-06-13T00:00:00Z",
+    files: {
+      design: "",
+      notes: "",
+      proposal: "",
+      spec: "",
+      tasks: "",
+    },
+    id: "20260613-deeptalk-test",
+    path: ".seeyouclaw/deeptalk/projects/20260613-deeptalk-test",
+    summary: {
+      current: "Current project shape",
+      open_questions: ["What should this become?"],
+      tasks: ["Clarify the artifact."],
+      why: "Research exploration",
+    },
+    title: "Telephone",
+    turnCount: 0,
+    updatedAt: "2026-06-13T00:00:00Z",
+    ...overrides,
+  });
+  return {
+    archive: vi.fn(async () => ({
+      ok: true,
+      project: project(),
+    })),
+    ensure: vi.fn(async () => ({
+      ok: true,
+      project: project(),
+    })),
+    update: vi.fn(async () => ({
+      ok: true,
+      project: project({ turnCount: 1 }),
+    })),
+  };
+});
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -32,6 +72,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
     })),
     fetchSeeyouclawTelephoneSpeech: vi.fn(async () => ({ ok: false })),
     fetchSeeyouclawVisionRoute: vi.fn(async () => ({ ok: false })),
+    archiveSeeyouclawDeepTalkProject: deepTalkApiMock.archive,
+    ensureSeeyouclawDeepTalkProject: deepTalkApiMock.ensure,
+    updateSeeyouclawDeepTalkProject: deepTalkApiMock.update,
   };
 });
 
@@ -150,6 +193,19 @@ describe("SeeyouclawTelephonePage", () => {
         seeyouclawDeepTalk: true,
       },
     );
+    await waitFor(() => expect(deepTalkApiMock.ensure).toHaveBeenCalledWith(
+      "test-token",
+      expect.objectContaining({ chatId: "telephone-chat" }),
+    ));
+    await waitFor(() => expect(deepTalkApiMock.update).toHaveBeenCalledWith(
+      "test-token",
+      expect.objectContaining({
+        projectId: "20260613-deeptalk-test",
+        userText: "我们深入聊聊这个科研想法",
+      }),
+    ));
+    expect(screen.getByText("Project")).toBeInTheDocument();
+    expect(screen.getByText("Research exploration")).toBeInTheDocument();
   });
 
   it("rolls back the call controls when chat creation fails", async () => {

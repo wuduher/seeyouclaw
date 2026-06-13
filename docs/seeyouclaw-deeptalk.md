@@ -22,23 +22,27 @@ The assistant keeps the conversation moving as a guided session.
 
 ### Archive
 
-When the user asks to archive, the assistant should turn the conversation into
-an OpenSpec-inspired project record.
+DeepTalk maintains an OpenSpec-inspired project record while the call continues:
 
 ```text
-deeptalk/archive/YYYY-MM-DD-<slug>/
+.seeyouclaw/deeptalk/projects/<timestamp>-<slug>/
+  project.json             # sidecar metadata and compact summary
   proposal.md              # why this topic matters
-  design.md                # current state, approach, risks, decisions
+  design.md                # current state and runtime approach
   tasks.md                 # ordered next steps
   specs/
-    <topic>/
-      spec.md              # concrete claims, requirements, hypotheses
-  transcript.md            # optional selected notes or raw conversation summary
+    main/
+      spec.md              # concrete requirements and scenarios
+  notes.md                 # selected turn notes from the call
+  archive/
+    <timestamp>/
+      ...                  # point-in-time snapshot
 ```
 
-The archive step should first confirm scope briefly, especially for emotional
-or personal material. If file-writing tools are not available, the assistant can
-return the same structure as a written synthesis in chat.
+The archive step is explicit. The user can press the archive button in the
+Telephone sidebar, or ask the assistant to summarize/archive the discussion.
+The current PR implements the file-writing sidecar and archive button; richer
+LLM-authored project diffs can be layered on later.
 
 ## OpenSpec Influence
 
@@ -55,21 +59,37 @@ This keeps telephone latency low and keeps seeyouclaw's implementation modular.
 
 ## Runtime Integration
 
-DeepTalk currently enters through an explicit `DEEPTALK` toggle on the
-telephone page. The toggle adds `seeyouclaw_deeptalk` metadata to user turns.
-The backend then injects runtime guidance into nanobot's existing context
-builder.
+DeepTalk enters through an explicit `DEEPTALK` toggle on the telephone page.
+The toggle adds `seeyouclaw_deeptalk` metadata to user turns, so the backend
+injects runtime guidance into nanobot's existing context builder.
+
+In parallel, the frontend calls protected WebUI APIs:
+
+- `/api/seeyouclaw/deeptalk/ensure`
+- `/api/seeyouclaw/deeptalk/update`
+- `/api/seeyouclaw/deeptalk/read`
+- `/api/seeyouclaw/deeptalk/archive`
 
 This design preserves nanobot compatibility:
 
 - The same WebSocket chat id is used.
 - Existing memory and context replay still work.
 - Telephone spoken-reply hints still apply.
-- The mode can be disabled per turn without mutating global configuration.
+- The project sidecar is opt-in and can be disabled per call.
+- Sidecar updates are short and deterministic, so they do not add cloud-token
+  cost or block the live call loop.
+
+## Current Limitations
+
+- The project sidecar is deterministic. It records compact state, but it does
+  not yet run a separate LLM spec-diff agent.
+- It stores selected turn snippets, not the full nanobot transcript.
+- Archive creates a point-in-time snapshot; it does not yet ask a model to
+  rewrite the project into a polished final document.
 
 ## Acceptance Script
 
-Use the telephone page and turn on `DEEPTALK`.
+Open `#/telephone`, start a call, and turn on `DEEPTALK`.
 
 Explore prompt:
 
@@ -77,12 +97,14 @@ Explore prompt:
 我最近在想一个科研想法：能不能让多模态助手在低成本下判断什么时候该看摄像头，但我还没想清楚研究问题怎么定。
 ```
 
-Expected response shape:
+Expected result:
 
-- The assistant should first reflect the uncertainty or motivation.
-- It should name a compact structure such as why/current shape/open question/next step.
-- It should ask exactly one focused question instead of giving a flat answer.
-- It should keep the response short enough to be spoken.
+- The assistant should reflect the uncertainty or motivation.
+- It should name a compact project frame, such as why/current shape/open
+  question/next step.
+- It should ask exactly one focused question.
+- The right sidebar should show a DeepTalk project with Why, Current,
+  Questions, and Tasks.
 
 Follow-up prompt:
 
@@ -90,11 +112,12 @@ Follow-up prompt:
 我更关心它怎么像一个长期项目一样沉淀下来。
 ```
 
-Expected response shape:
+Expected result:
 
 - The assistant should connect the follow-up to the previous structure.
-- It should update the project frame instead of restarting.
-- It should lead toward one next decision.
+- The DeepTalk project panel should update instead of restarting.
+- `notes.md`, `proposal.md`, `design.md`, `tasks.md`, and `specs/main/spec.md`
+  should exist under `.seeyouclaw/deeptalk/projects/...`.
 
 Archive prompt:
 
@@ -102,18 +125,17 @@ Archive prompt:
 把这次讨论归档成一个项目。
 ```
 
-Expected response shape:
+Expected result:
 
-- The assistant should switch from spoken exploration to a written project record.
-- The record should include `proposal.md`, `design.md`, `tasks.md`, and
-  `specs/<topic>/spec.md`.
+- The assistant should move toward written synthesis.
+- Pressing the archive button should create an `archive/<timestamp>/` snapshot.
 
 ## Future Work
 
-- Add a real archive endpoint that writes approved DeepTalk records under the
-  active workspace.
-- Add a compact side panel for current proposal, open questions, and tasks.
+- Replace the deterministic updater with a separate low-cost DeepTalk sidecar
+  agent that proposes structured spec diffs.
+- Add user-approved export controls for saving selected DeepTalk projects into
+  a public `docs/deeptalk/` folder.
 - Add opt-in visual state notes, such as "confused" or "showing an object",
   with short retention.
-- Add export controls so users can clear, download, or continue a DeepTalk
-  project later.
+- Add controls to clear, download, or continue a DeepTalk project later.

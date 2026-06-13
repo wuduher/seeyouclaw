@@ -17,6 +17,8 @@ Planned for the competition build:
 - As a user, ordinary text or voice chat does not upload camera frames.
 - As a developer/judge, I can see the current routing decision, such as
   `Audio only` or `Vision snapshot`.
+- As a user, I can open a telephone-style subpage for a camera-on voice call
+  experience while keeping the same nanobot chat context.
 - As a developer, I can replace the model provider without rewriting the camera
   or routing code.
 - As a demo presenter, I can explain which operating-cost controls are active.
@@ -37,6 +39,9 @@ Implemented in the first pass:
   `no_visual_need`. It catches broader object-attribute questions such as
   `my chair color`, stronger emotion shifts, and semantic-slot follow-ups
   without hard-coding every object noun.
+- A `#/telephone` subpage provides a video-call surface with camera preview,
+  browser speech recognition, nanobot-backed streaming replies, optional Qwen
+  Omni audio playback, and browser speech synthesis fallback.
 - Triggered snapshots are appended to the existing WebSocket image attachment
   payload, so no protocol fork is needed.
 - Router unit tests cover audio-only, visual trigger, disabled camera, image
@@ -77,6 +82,7 @@ flowchart LR
   Media --> Context["Agent context builder"]
   Context --> Provider["Replaceable LLM provider"]
   Provider --> Reply["Streaming assistant reply"]
+  Reply --> TelAudio["Telephone audio playback"]
 ```
 
 Important boundaries:
@@ -85,6 +91,12 @@ Important boundaries:
 - Snapshots reuse nanobot image attachments and media persistence.
 - Provider selection remains in `modelPresets`, so the camera pipeline does not
   depend on one vendor.
+- Telephone mode sends user utterances through the same WebSocket chat session,
+  so existing context replay, memory consolidation, workspace scope, and tools
+  continue to work.
+- Qwen Omni telephone speech is a protected WebUI API that turns the final
+  assistant text into audio. It is intentionally outside the main agent loop so
+  it cannot fork memory or mutate conversation history.
 - The router is a pure TypeScript module, ready to be replaced by a small intent
   classifier if rules are not enough.
 - The LLM router is a protected WebUI API and never writes into the chat
@@ -131,6 +143,9 @@ Actually adopted in the first pass:
   in the first demo loop.
 - Voice input prefers a browser-local fallback before requiring a cloud speech
   provider, which lowers demo friction and keeps operator cost optional.
+- Telephone audio playback prefers Qwen Omni only after the assistant has
+  produced a final text reply; if that call fails, browser speech synthesis
+  keeps the conversation flowing.
 
 ## Two-Day PR Plan
 
@@ -157,3 +172,9 @@ PR 4: Demo hardening
 - Add route/cost counters for the demo.
 - Add a sample script covering audio-only, visual snapshot, and cooldown.
 - Record demo video and link it from README.
+
+PR 5: Telephone mode
+
+- Add a dedicated video-call subpage.
+- Reuse nanobot WebSocket sessions for context and memory compatibility.
+- Add Qwen Omni audio playback with browser speech fallback.

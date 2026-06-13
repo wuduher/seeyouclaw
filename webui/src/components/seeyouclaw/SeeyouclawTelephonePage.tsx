@@ -20,11 +20,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { MAX_IMAGES_PER_MESSAGE } from "@/hooks/useAttachedImages";
 import { useCameraSnapshot } from "@/hooks/seeyouclaw/useCameraSnapshot";
+import { useHybridAsrRecorder } from "@/hooks/seeyouclaw/useHybridAsrRecorder";
 import { useNanobotStream, type SendImage } from "@/hooks/useNanobotStream";
 import { useSessionHistory } from "@/hooks/useSessions";
 import {
   fetchSeeyouclawTelephoneSpeech,
   fetchSeeyouclawVisionRoute,
+  fetchSettings,
 } from "@/lib/api";
 import { supportsBrowserSpeechRecognition } from "@/lib/browserSpeechRecognition";
 import {
@@ -144,8 +146,10 @@ export function SeeyouclawTelephonePage({
     stop,
     streamError,
     dismissStreamError,
+    transcribeAudio,
   } = useNanobotStream(chatId, history.messages, history.hasPendingToolCalls);
 
+  const [cloudTranscriptionReady, setCloudTranscriptionReady] = useState(false);
   const [active, setActive] = useState(false);
   const [mode, setMode] = useState<TelephoneMode>("idle");
   const [micMuted, setMicMuted] = useState(false);
@@ -169,6 +173,18 @@ export function SeeyouclawTelephonePage({
   const playAudioFinishRef = useRef<(() => void) | null>(null);
   const stopAgentRef = useRef<() => void>(() => undefined);
   const startListeningRef = useRef<(options?: { bargeIn?: boolean }) => void>(() => undefined);
+  const isFinalizingUtteranceRef = useRef(false);
+
+  const {
+    abortSegment,
+    finalizeSegment,
+    hybridEnabled,
+    release: releaseHybridAsr,
+    startSegment,
+  } = useHybridAsrRecorder({
+    enabled: cloudTranscriptionReady,
+    onTranscribe: cloudTranscriptionReady ? transcribeAudio : undefined,
+  });
 
   const canUseSpeechRecognition = useMemo(() => supportsBrowserSpeechRecognition(), []);
   const callMessages = useMemo(() => visibleCallMessages(messages), [messages]);
@@ -194,6 +210,24 @@ export function SeeyouclawTelephonePage({
   useEffect(() => {
     stopAgentRef.current = stop;
   }, [stop]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchSettings(token)
+      .then((settings) => {
+        if (cancelled) return;
+        const transcription = settings.transcription;
+        setCloudTranscriptionReady(Boolean(
+          transcription?.enabled && transcription.provider_configured,
+        ));
+      })
+      .catch(() => {
+        if (!cancelled) setCloudTranscriptionReady(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   useEffect(() => {
     if (!active) {
@@ -222,22 +256,34 @@ export function SeeyouclawTelephonePage({
     } catch {
       // ignore stale browser recognizers
     }
-  }, []);
+    if (abort) abortSegment();
+  }, [abortSegment]);
 
-  const dispatchUtterance = useCallback((text: string) => {
+  const dispatchUtterance = useCallback(async (text: string) => {
+    if (isFinalizingUtteranceRef.current) return;
     const normalized = normalizeSpokenText(text);
     if (!normalized || normalized === lastCommittedUtteranceRef.current) return;
+    isFinalizingUtteranceRef.current = true;
     lastCommittedUtteranceRef.current = normalized;
     window.setTimeout(() => {
       lastCommittedUtteranceRef.current = "";
     }, 4_000);
     stopListening();
     setInterimTranscript("");
-    setLastUserText(normalized);
-    window.dispatchEvent(new CustomEvent("seeyouclaw-telephone-final", {
-      detail: { text: normalized },
-    }));
-  }, [stopListening]);
+    if (hybridEnabled) {
+      setSpeechLabel("Transcribing");
+    }
+    try {
+      const resolved = await finalizeSegment(normalized);
+      if (!resolved || !activeRef.current) return;
+      setLastUserText(resolved);
+      window.dispatchEvent(new CustomEvent("seeyouclaw-telephone-final", {
+        detail: { text: resolved },
+      }));
+    } finally {
+      isFinalizingUtteranceRef.current = false;
+    }
+  }, [finalizeSegment, hybridEnabled, stopListening]);
 
   const stopSpeech = useCallback(() => {
     speakingRef.current = false;
@@ -335,13 +381,13 @@ export function SeeyouclawTelephonePage({
         interimCommitTimerRef.current = null;
       }
       if (normalized) {
-        dispatchUtterance(normalized);
+        void dispatchUtterance(normalized);
         return;
       }
       if (interimText) {
         interimCommitTimerRef.current = window.setTimeout(() => {
           interimCommitTimerRef.current = null;
-          dispatchUtterance(interimText);
+          void dispatchUtterance(interimText);
         }, TELEPHONE_INTERIM_STABLE_MS);
       }
     };
@@ -362,14 +408,15 @@ export function SeeyouclawTelephonePage({
     recognitionRef.current = recognition;
     try {
       recognition.start();
+      void startSegment();
       if (!options?.bargeIn) {
         setMode("listening");
-        setSpeechLabel("Listening");
+        setSpeechLabel(hybridEnabled ? "Listening · Hybrid ASR" : "Listening");
       }
     } catch {
       recognitionRef.current = null;
     }
-  }, [dispatchUtterance, interruptAssistant, stopListening]);
+  }, [dispatchUtterance, hybridEnabled, interruptAssistant, startSegment, stopListening]);
 
   useEffect(() => {
     startListeningRef.current = startListening;
@@ -565,9 +612,10 @@ export function SeeyouclawTelephonePage({
     setLastUserText("");
     stopListening(true);
     stopSpeech();
+    releaseHybridAsr();
     camera.stop();
     if (isStreamingRef.current) stop();
-  }, [camera, stop, stopListening, stopSpeech]);
+  }, [camera, releaseHybridAsr, stop, stopListening, stopSpeech]);
 
   const toggleMic = useCallback(() => {
     setMicMuted((current) => {
@@ -594,9 +642,10 @@ export function SeeyouclawTelephonePage({
     return () => {
       stopListening(true);
       stopSpeech();
+      releaseHybridAsr();
       camera.stop();
     };
-  }, [camera.stop, stopListening, stopSpeech]);
+  }, [camera.stop, releaseHybridAsr, stopListening, stopSpeech]);
 
   const streamErrorText = streamError
     ? (streamError.kind === "message_too_big" ? "Message too large" : "Workspace rejected")

@@ -17,11 +17,74 @@ from pathlib import Path
 from typing import Any
 
 PROJECT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}$")
-QUESTION_RE = re.compile(r"[^?？。.!！\n]{4,160}[?？]")
+QUESTION_RE = re.compile("[^?\n\uFF1F]{4,160}[?\uFF1F]")
 
 MAX_FIELD_CHARS = 1_200
 MAX_FILE_CHARS = 6_000
 MAX_LIST_ITEMS = 6
+
+DEFAULT_PROACTIVE_SIGNALS = [
+    "SDD questions: clarify why, scope, requirements, scenarios, trade-offs, and tasks.",
+    "Empathy and curiosity: ask from the user's motivation, uncertainty, and emotional state.",
+    "Multimodal observation window: reason over available frames or video context, not one frozen keyframe.",
+    "Hook nudges: revisit stale questions, drift, long pauses, repeated uncertainty, or archive readiness.",
+]
+
+ARCHIVE_KEYWORDS = (
+    "archive",
+    "archived",
+    "summarize",
+    "summary",
+    "\u5f52\u6863",
+    "\u603b\u7ed3",
+)
+DESIGN_KEYWORDS = (
+    "how",
+    "design",
+    "plan",
+    "approach",
+    "implement",
+    "\u600e\u4e48",
+    "\u5982\u4f55",
+    "\u65b9\u6848",
+    "\u8bbe\u8ba1",
+    "\u5b9e\u73b0",
+)
+PROJECT_KEYWORDS = (
+    "project",
+    "research",
+    "idea",
+    "paper",
+    "blog",
+    "\u9879\u76ee",
+    "\u79d1\u7814",
+    "\u60f3\u6cd5",
+)
+EMPATHY_KEYWORDS = (
+    "stuck",
+    "uncertain",
+    "confused",
+    "worried",
+    "hard",
+    "\u5361\u4f4f",
+    "\u4e0d\u786e\u5b9a",
+    "\u56f0\u60d1",
+    "\u7126\u8651",
+    "\u96be",
+)
+OBSERVATION_KEYWORDS = (
+    "camera",
+    "frame",
+    "frames",
+    "video",
+    "screen",
+    "posture",
+    "expression",
+    "\u6444\u50cf\u5934",
+    "\u753b\u9762",
+    "\u89c6\u9891",
+    "\u8868\u60c5",
+)
 
 
 def ensure_deeptalk_project(workspace_path: Path, payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -60,6 +123,7 @@ def ensure_deeptalk_project(workspace_path: Path, payload: Mapping[str, Any]) ->
                 "Clarify the main question.",
                 "Choose one concrete artifact to preserve.",
             ],
+            "proactive_signals": list(DEFAULT_PROACTIVE_SIGNALS),
         },
     }
     project_dir = _project_dir(workspace_path, project_id)
@@ -76,7 +140,9 @@ def update_deeptalk_project(workspace_path: Path, payload: Mapping[str, Any]) ->
     project_dir = _project_dir(workspace_path, project["id"])
     user_text = _clean_text(str(payload.get("userText") or ""), MAX_FIELD_CHARS)
     assistant_text = _clean_text(str(payload.get("assistantText") or ""), MAX_FIELD_CHARS)
-    if not user_text and not assistant_text:
+    observation_text = _clean_text(str(payload.get("observationText") or ""), MAX_FIELD_CHARS)
+    hook_text = _clean_text(str(payload.get("hookText") or ""), MAX_FIELD_CHARS)
+    if not any([user_text, assistant_text, observation_text, hook_text]):
         return {"ok": True, "project": _project_response(workspace_path, project, project_dir)}
 
     now = _now_iso()
@@ -92,6 +158,18 @@ def update_deeptalk_project(workspace_path: Path, payload: Mapping[str, Any]) ->
             assistant_text,
         )
         _update_summary_from_text(project, assistant_text, source="assistant")
+    if observation_text:
+        _append_note(
+            project_dir,
+            int(project.get("turn_count") or 0),
+            "Observation",
+            observation_text,
+        )
+        _update_summary_from_text(project, observation_text, source="observation")
+    if hook_text:
+        _append_note(project_dir, int(project.get("turn_count") or 0), "Hook", hook_text)
+        _update_summary_from_text(project, hook_text, source="hook")
+
     project["updated_at"] = now
     _write_json(project_dir / "project.json", project)
     _write_markdown_files(project_dir, project)
@@ -215,12 +293,16 @@ def _resolve_project(workspace_path: Path, payload: Mapping[str, Any]) -> dict[s
 def _summary(project: Mapping[str, Any]) -> dict[str, Any]:
     raw = project.get("summary")
     if not isinstance(raw, dict):
-        return {"why": "", "current": "", "open_questions": [], "tasks": []}
+        raw = {}
+    proactive = [str(x) for x in raw.get("proactive_signals") or [] if str(x).strip()]
+    if not proactive:
+        proactive = list(DEFAULT_PROACTIVE_SIGNALS)
     return {
         "why": str(raw.get("why") or ""),
         "current": str(raw.get("current") or ""),
         "open_questions": [str(x) for x in raw.get("open_questions") or [] if str(x).strip()],
         "tasks": [str(x) for x in raw.get("tasks") or [] if str(x).strip()],
+        "proactive_signals": proactive[-MAX_LIST_ITEMS:],
     }
 
 
@@ -284,30 +366,78 @@ def _append_unique(items: list[str], item: str) -> None:
     del items[:-MAX_LIST_ITEMS]
 
 
+def _has_any(text: str, keywords: tuple[str, ...]) -> bool:
+    lowered = text.lower()
+    return any(keyword.lower() in lowered for keyword in keywords)
+
+
 def _update_summary_from_text(project: dict[str, Any], text: str, *, source: str) -> None:
     summary = _summary(project)
     if source == "user":
         summary["current"] = text
         if summary["why"].startswith("A DeepTalk exploration"):
             summary["why"] = text
+
     for question in QUESTION_RE.findall(text):
         _append_unique(summary["open_questions"], question.strip())
+
+    if source == "observation" or _has_any(text, OBSERVATION_KEYWORDS):
+        _append_unique(
+            summary["proactive_signals"],
+            "Observation-window signal: ask what changed across the available frames or video.",
+        )
+        _append_unique(
+            summary["open_questions"],
+            "What does the recent visual window change about the user's state or project direction?",
+        )
+    if source == "hook":
+        _append_unique(
+            summary["proactive_signals"],
+            "Hook signal: decide whether to revisit, split, archive, or advance the current thread.",
+        )
+        _append_unique(
+            summary["open_questions"],
+            "Is this the right moment to archive, split, or move the DeepTalk forward?",
+        )
+    if source == "user" or _has_any(text, PROJECT_KEYWORDS + DESIGN_KEYWORDS):
+        _append_unique(
+            summary["proactive_signals"],
+            "SDD signal: map this turn to proposal, design, requirements, scenarios, or tasks.",
+        )
+        _append_unique(
+            summary["open_questions"],
+            "Which artifact should this become: proposal, design decision, requirement, scenario, or task?",
+        )
+    if _has_any(text, EMPATHY_KEYWORDS):
+        _append_unique(
+            summary["proactive_signals"],
+            "Empathy signal: ask from the user's uncertainty or felt difficulty before structuring.",
+        )
+        _append_unique(
+            summary["open_questions"],
+            "What is the felt difficulty underneath this idea right now?",
+        )
+
     if source == "user":
-        lowered = text.lower()
-        if any(keyword in lowered for keyword in ["archive", "归档", "总结"]):
+        if _has_any(text, ARCHIVE_KEYWORDS):
             _append_unique(summary["tasks"], "Archive the current exploration snapshot.")
-        elif any(keyword in lowered for keyword in ["how", "怎么", "如何", "方案", "设计", "实现"]):
+        elif _has_any(text, DESIGN_KEYWORDS):
             _append_unique(summary["tasks"], "Turn the exploration into a concrete design option.")
-        elif any(keyword in lowered for keyword in ["project", "项目", "科研", "想法"]):
+        elif _has_any(text, PROJECT_KEYWORDS):
             _append_unique(summary["tasks"], "Name the core question and expected artifact.")
     project["summary"] = summary
+
+
+def _markdown_list(items: list[str]) -> str:
+    return "\n".join(f"- {item}" for item in items) or "- TBD"
 
 
 def _write_markdown_files(project_dir: Path, project: Mapping[str, Any]) -> None:
     summary = _summary(project)
     title = str(project.get("title") or "DeepTalk")
-    questions = "\n".join(f"- {item}" for item in summary["open_questions"]) or "- TBD"
+    questions = _markdown_list(summary["open_questions"])
     tasks = "\n".join(f"- [ ] {item}" for item in summary["tasks"]) or "- [ ] TBD"
+    proactive = _markdown_list(summary["proactive_signals"])
     project_dir.mkdir(parents=True, exist_ok=True)
     (project_dir / "proposal.md").write_text(
         "\n".join([
@@ -320,6 +450,10 @@ def _write_markdown_files(project_dir: Path, project: Mapping[str, Any]) -> None
             "## Open Questions",
             "",
             questions,
+            "",
+            "## Proactive Signals",
+            "",
+            proactive,
             "",
         ]),
         encoding="utf-8",
@@ -336,6 +470,14 @@ def _write_markdown_files(project_dir: Path, project: Mapping[str, Any]) -> None
             "",
             "- Telephone mode remains the live conversation loop.",
             "- This project sidecar records the durable OpenSpec-style state.",
+            "- Sidecar updates are deterministic and should not block spoken replies.",
+            "",
+            "## Proactivity Model",
+            "",
+            "- SDD questions turn vague conversation into proposal, design, tasks, and specs.",
+            "- Empathy and curiosity questions respond to the user's state, motivation, and uncertainty.",
+            "- Multimodal observations should be treated as a recent window of frames or video context.",
+            "- Hook nudges can surface stale questions, drift, pause, follow-up, or archive readiness.",
             "",
         ]),
         encoding="utf-8",
@@ -365,6 +507,29 @@ def _write_markdown_files(project_dir: Path, project: Mapping[str, Any]) -> None
             "",
             "- WHEN a DeepTalk utterance is processed",
             "- THEN the project summary and notes SHOULD be updated",
+            "",
+            "### Requirement: Ask proactive project questions",
+            "",
+            "The assistant SHOULD derive proactive questions from SDD structure, user state, "
+            "multimodal observations, and configured hook nudges.",
+            "",
+            "#### Scenario: A signal appears",
+            "",
+            "- WHEN the conversation reveals a requirement, design choice, emotional cue, "
+            "observation window, stale question, or archive opportunity",
+            "- THEN DeepTalk SHOULD ask one focused next question",
+            "- AND the sidecar SHOULD record the active proactive signal",
+            "",
+            "### Requirement: Treat multimodal input as an observation window",
+            "",
+            "DeepTalk SHOULD support summaries from several keyframes or video snippets instead "
+            "of assuming a single captured frame represents the user's state.",
+            "",
+            "#### Scenario: Visual context is available",
+            "",
+            "- WHEN multiple frames or a short video-derived observation are available",
+            "- THEN DeepTalk SHOULD ask from the observed change over time",
+            "- AND it SHOULD avoid storing sensitive visual profile facts unless approved",
             "",
         ]),
         encoding="utf-8",

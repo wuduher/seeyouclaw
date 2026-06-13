@@ -91,6 +91,7 @@ export async function fetchSeeyouclawTelephoneSpeech(
 export interface SeeyouclawDeepTalkSummary {
   current: string;
   open_questions: string[];
+  proactive_signals: string[];
   tasks: string[];
   why: string;
 }
@@ -135,6 +136,8 @@ export async function updateSeeyouclawDeepTalkProject(
   payload: {
     assistantText?: string;
     chatId?: string;
+    hookText?: string;
+    observationText?: string;
     projectId?: string;
     userText?: string;
   },

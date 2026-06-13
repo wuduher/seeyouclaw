@@ -141,6 +141,8 @@ describe("webui API helpers", () => {
       title: "DeepTalk",
     });
     await updateSeeyouclawDeepTalkProject("tok", {
+      hookText: "archive readiness",
+      observationText: "video window",
       projectId: "project-1",
       userText: "next thought",
     });
@@ -151,6 +153,12 @@ describe("webui API helpers", () => {
     expect(JSON.parse(new URL(calls[0], "http://test").searchParams.get("payload") ?? "{}"))
       .toMatchObject({ chatId: "chat-1", title: "DeepTalk" });
     expect(calls[1]).toContain("/api/seeyouclaw/deeptalk/update?");
+    expect(JSON.parse(new URL(calls[1], "http://test").searchParams.get("payload") ?? "{}"))
+      .toMatchObject({
+        hookText: "archive readiness",
+        observationText: "video window",
+        projectId: "project-1",
+      });
     expect(calls[2]).toContain("/api/seeyouclaw/deeptalk/archive?");
   });
 

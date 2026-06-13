@@ -21,6 +21,8 @@ Planned for the competition build:
   experience while keeping the same nanobot chat context.
 - As a user, I can turn on DeepTalk during a video call for a more proactive,
   projectized conversation about emotions, research ideas, or essays.
+- As a user, DeepTalk can ask useful proactive questions from project structure,
+  empathy/curiosity, multimodal observations, and hook-driven nudges.
 - As a developer, I can replace the model provider without rewriting the camera
   or routing code.
 - As a demo presenter, I can explain which operating-cost controls are active.
@@ -48,6 +50,9 @@ Implemented in the first pass:
   into an active exploration mode and maintains a parallel OpenSpec-inspired
   project sidecar with `proposal.md`, `design.md`, `tasks.md`,
   `specs/main/spec.md`, `notes.md`, and archive snapshots.
+- The DeepTalk sidecar records proactive signals from SDD-style questions,
+  empathy/curiosity, observation-window summaries, and hook nudges. This makes
+  initiative a first-class project state instead of only a prompt style.
 - Triggered snapshots are appended to the existing WebSocket image attachment
   payload, so no protocol fork is needed.
 - Router unit tests cover audio-only, visual trigger, disabled camera, image
@@ -68,6 +73,9 @@ Deferred after the stable loop:
 
 - Full-duplex voice playback with interruption.
 - Multi-frame burst capture for motion or posture understanding.
+- Feeding DeepTalk `observationText` from multi-frame or short-video analysis.
+- Feeding DeepTalk `hookText` from pauses, drift, stale questions, and archive
+  readiness.
 - User profile persistence with explicit clear/export controls.
 - Separate routing between a cheap text model and a stronger vision model.
 - Local lightweight scene-change detection before cloud vision calls.
@@ -113,6 +121,9 @@ Important boundaries:
 - DeepTalk project APIs are protected WebUI endpoints. They update only compact
   turn snippets, keeping the telephone loop responsive and avoiding extra cloud
   model calls.
+- DeepTalk observation context is designed as a window over several frames or a
+  short video-derived summary. The current PR only stores compact summaries;
+  later capture routes can feed the same sidecar without changing project files.
 - The router is a pure TypeScript module, ready to be replaced by a small intent
   classifier if rules are not enough.
 - The LLM router is a protected WebUI API and never writes into the chat
@@ -166,6 +177,9 @@ Actually adopted in the first pass:
   tokens on projectized prompting.
 - The first DeepTalk project store is deterministic and local, so project-panel
   updates do not add a second LLM call to every spoken turn.
+- DeepTalk proactive signals are stored as text summaries. Multi-frame/video
+  analysis and hook timers can be added only when enabled, so the default call
+  path stays low-cost.
 
 ## Two-Day PR Plan
 
@@ -204,4 +218,4 @@ PR 6: DeepTalk mode
 - Add a DeepTalk toggle to telephone mode.
 - Inject projectized explore/archive runtime guidance through message metadata.
 - Add a lightweight project sidecar and sidebar panel for OpenSpec-inspired
-  files, live questions, tasks, and archive snapshots.
+  files, live questions, proactive signals, tasks, and archive snapshots.

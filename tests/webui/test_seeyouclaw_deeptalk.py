@@ -25,6 +25,8 @@ def test_deeptalk_project_creation_writes_openspec_shape(tmp_path: Path) -> None
     assert result["ok"] is True
     assert project["chatId"] == "chat-1"
     assert project["summary"]["why"] == "Explore a low-cost multimodal routing idea."
+    assert any("SDD questions" in item for item in project["summary"]["proactive_signals"])
+    assert any("Multimodal observation window" in item for item in project["summary"]["proactive_signals"])
     assert (project_dir / "proposal.md").exists()
     assert (project_dir / "design.md").exists()
     assert (project_dir / "tasks.md").exists()
@@ -59,9 +61,35 @@ def test_deeptalk_project_updates_summary_and_notes(tmp_path: Path) -> None:
     assert "How should we design" in project["summary"]["current"]
     assert any("How should we design" in item for item in project["summary"]["open_questions"])
     assert any("concrete design option" in item for item in project["summary"]["tasks"])
+    assert any("SDD signal" in item for item in project["summary"]["proactive_signals"])
     notes = (project_dir / "notes.md").read_text(encoding="utf-8")
     assert "## Turn 1 - User" in notes
     assert "## Turn 1 - Assistant" in notes
+
+
+def test_deeptalk_project_tracks_observation_and_hook_signals(tmp_path: Path) -> None:
+    created = ensure_deeptalk_project(tmp_path, {"chatId": "chat-1", "title": "DeepTalk"})
+    project_id = created["project"]["id"]
+
+    updated = update_deeptalk_project(
+        tmp_path,
+        {
+            "hookText": "Long pause; revisit stale open question before archive.",
+            "observationText": "Video window: the user looks confused across several frames.",
+            "projectId": project_id,
+        },
+    )
+
+    project = updated["project"]
+    project_dir = tmp_path / project["path"]
+    assert any("Observation-window signal" in item for item in project["summary"]["proactive_signals"])
+    assert any("Hook signal" in item for item in project["summary"]["proactive_signals"])
+    assert any("visual window" in item for item in project["summary"]["open_questions"])
+    notes = (project_dir / "notes.md").read_text(encoding="utf-8")
+    assert "## Turn 1 - Observation" in notes
+    assert "## Turn 1 - Hook" in notes
+    spec = (project_dir / "specs" / "main" / "spec.md").read_text(encoding="utf-8")
+    assert "observation window" in spec
 
 
 def test_deeptalk_project_archive_creates_snapshot(tmp_path: Path) -> None:

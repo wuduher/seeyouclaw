@@ -30,6 +30,7 @@ const deepTalkApiMock = vi.hoisted(() => {
     summary: {
       current: "Current project shape",
       open_questions: ["What should this become?"],
+      proactive_signals: ["SDD questions and observation windows"],
       tasks: ["Clarify the artifact."],
       why: "Research exploration",
     },
@@ -206,6 +207,7 @@ describe("SeeyouclawTelephonePage", () => {
     ));
     expect(screen.getByText("Project")).toBeInTheDocument();
     expect(screen.getByText("Research exploration")).toBeInTheDocument();
+    expect(screen.getByText("SDD questions and observation windows")).toBeInTheDocument();
   });
 
   it("rolls back the call controls when chat creation fails", async () => {

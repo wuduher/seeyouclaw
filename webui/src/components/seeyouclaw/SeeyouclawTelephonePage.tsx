@@ -18,6 +18,7 @@ import {
   PhoneOff,
   Radio,
   RotateCcw,
+  Sparkles,
   Video,
   Volume2,
 } from "lucide-react";
@@ -1005,6 +1006,21 @@ export function SeeyouclawTelephonePage({
                       <div className="space-y-1">
                         {(deepTalkProject?.summary.open_questions?.slice(0, 3) ?? [
                           "What concrete outcome should this DeepTalk produce?",
+                        ]).map((item) => (
+                          <div key={item} className="line-clamp-2 break-words">
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="border-t border-white/10 pt-2">
+                      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase text-white/45">
+                        <Sparkles className="h-3 w-3" />
+                        Signals
+                      </div>
+                      <div className="space-y-1">
+                        {(deepTalkProject?.summary.proactive_signals?.slice(0, 3) ?? [
+                          "SDD questions, empathy, observation windows, and hooks.",
                         ]).map((item) => (
                           <div key={item} className="line-clamp-2 break-words">
                             {item}

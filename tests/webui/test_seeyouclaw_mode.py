@@ -21,6 +21,8 @@ def test_deeptalk_runtime_lines_when_metadata_flag_set() -> None:
     assert "response contract" in " ".join(lines).lower()
     assert "exactly one focused" in " ".join(lines).lower()
     assert "proposal.md" in " ".join(lines)
+    assert "proactivity has three sources" in " ".join(lines).lower()
+    assert "observation window" in " ".join(lines).lower()
     assert "archive" in " ".join(lines).lower()
 
 

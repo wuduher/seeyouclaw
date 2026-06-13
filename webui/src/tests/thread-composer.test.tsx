@@ -553,10 +553,36 @@ describe("ThreadComposer", () => {
     expect(onTranscribeAudio).not.toHaveBeenCalled();
   });
 
-  it("warns during recording when microphone input is silent", async () => {
+  it("warns during hybrid recording when neither browser nor speech activity is detected", async () => {
     mockVoiceRecorder();
     mockVoiceAudioInput();
-    const onTranscribeAudio = vi.fn(async () => "should not appear");
+    mockBrowserSpeechRecognition("");
+    const onTranscribeAudio = vi.fn(async () => "cloud transcript");
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        onTranscribeAudio={onTranscribeAudio}
+        browserSpeechRecognition={{ enabled: true, language: "zh-CN" }}
+        placeholder="Type your message..."
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Voice input" }));
+    expect(await screen.findByLabelText("Recording 0:00")).toBeInTheDocument();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_150));
+    });
+
+    expect(screen.getByText("No microphone input detected.")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Stop recording" }));
+    await waitFor(() => expect(onTranscribeAudio).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByDisplayValue("cloud transcript")).toBeInTheDocument());
+  });
+
+  it("still transcribes cloud-only recordings even when analyser levels look silent", async () => {
+    mockVoiceRecorder();
+    mockVoiceAudioInput();
+    const onTranscribeAudio = vi.fn(async () => "cloud transcript");
     render(
       <ThreadComposer
         onSend={vi.fn()}
@@ -571,9 +597,11 @@ describe("ThreadComposer", () => {
       await new Promise((resolve) => setTimeout(resolve, 1_150));
     });
 
-    expect(screen.getByText("No microphone input detected.")).toBeInTheDocument();
+    expect(screen.queryByText("No microphone input detected.")).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "Stop recording" }));
-    expect(onTranscribeAudio).not.toHaveBeenCalled();
+
+    await waitFor(() => expect(onTranscribeAudio).toHaveBeenCalledTimes(1));
+    expect(screen.getByDisplayValue("cloud transcript")).toBeInTheDocument();
   });
 
   it("does not treat unavailable microphone levels as silence", async () => {

@@ -199,6 +199,8 @@ class GatewayHTTPHandler:
 
         if got == "/api/seeyouclaw/vision-route":
             return await self._handle_seeyouclaw_vision_route(request)
+        if got == "/api/seeyouclaw/telephone-speech":
+            return await self._handle_seeyouclaw_telephone_speech(request)
 
         # Settings routes (delegated)
         response = await self.settings_routes.dispatch(request, got)
@@ -313,6 +315,23 @@ class GatewayHTTPHandler:
         from nanobot.webui.seeyouclaw_vision_route import route_seeyouclaw_vision
 
         return _http_json_response(await route_seeyouclaw_vision(payload))
+
+    async def _handle_seeyouclaw_telephone_speech(self, request: WsRequest) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        raw_payload = _query_first(_parse_query(request.path), "payload")
+        if raw_payload is None:
+            return _http_error(400, "missing payload")
+        try:
+            payload = json.loads(raw_payload)
+        except Exception:
+            return _http_error(400, "invalid payload")
+        if not isinstance(payload, dict):
+            return _http_error(400, "invalid payload")
+
+        from nanobot.webui.seeyouclaw_telephone import synthesize_telephone_speech
+
+        return _http_json_response(await synthesize_telephone_speech(payload))
 
     # -- Session routes -----------------------------------------------------
 

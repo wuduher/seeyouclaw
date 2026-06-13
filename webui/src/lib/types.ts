@@ -909,4 +909,6 @@ export type Outbound =
       /** Marks messages sent by the embedded WebUI, without changing the
        * generic websocket protocol for other clients. */
       webui?: true;
+      /** Telephone subpage: inject spoken-reply runtime hints server-side. */
+      seeyouclaw_telephone?: true;
     };

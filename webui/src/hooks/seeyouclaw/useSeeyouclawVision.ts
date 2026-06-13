@@ -98,6 +98,17 @@ function decisionFromRemoteRoute(
   };
 }
 
+function remoteRouteFailureDecision(
+  current: VisionRouteDecision,
+  response: SeeyouclawVisionRouteResponse,
+): VisionRouteDecision {
+  const reason = response.reason?.trim() || "returned audio only";
+  return {
+    ...current,
+    reason: `remote vision router: ${reason}`,
+  };
+}
+
 export function useSeeyouclawVision({
   labels: labelOverrides,
   onCaptureError,
@@ -157,7 +168,8 @@ export function useSeeyouclawVision({
           maxImagesPerTurn: MAX_IMAGES_PER_MESSAGE,
           text,
         });
-        decision = decisionFromRemoteRoute(response, Date.now()) ?? decision;
+        decision = decisionFromRemoteRoute(response, Date.now())
+          ?? remoteRouteFailureDecision(decision, response);
       } catch {
         decision = {
           ...decision,
@@ -168,8 +180,11 @@ export function useSeeyouclawVision({
     routeContextRef.current = decision.nextContext;
 
     if (!decision.shouldCapture) {
-      if (decision.trigger !== "no_visual_need") {
-        setLastRoute(formatVisionRoute(decision));
+      if (
+        decision.trigger !== "no_visual_need"
+        || decision.reason.includes("remote vision router")
+      ) {
+        setLastRoute(`${formatVisionRoute(decision)} - ${decision.reason}`);
       }
       return undefined;
     }

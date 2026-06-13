@@ -72,7 +72,54 @@ def test_llm_router_parses_visible_attribute_slot(monkeypatch):
     }
     assert result["model"] == "deepseek-v4-flash"
     assert provider.kwargs["max_tokens"] == router.ROUTER_MAX_TOKENS
+    assert provider.kwargs["reasoning_effort"] == "none"
     assert provider.kwargs["temperature"] == 0.0
+
+
+def test_llm_router_prompt_covers_outfit_feedback(monkeypatch):
+    provider = FakeProvider(
+        json.dumps(
+            {
+                "ok": True,
+                "needVision": True,
+                "route": "vision_snapshot",
+                "intent": "outfit_feedback",
+                "reason": "The user asks for feedback on today's visible outfit.",
+                "confidence": 0.9,
+                "emotionEscalation": "low",
+                "slot": {"kind": "appearance", "questionType": "feedback"},
+                "bypassCooldown": False,
+            }
+        )
+    )
+
+    def fake_snapshot_loader(*, preset_name=None):
+        if preset_name in {"seeyouclaw-router", "deepseek-v4-flash"}:
+            raise ValueError("missing preset")
+        return SimpleNamespace(provider=provider, model="deepseek-v4-flash")
+
+    monkeypatch.setattr(router, "load_provider_snapshot", fake_snapshot_loader)
+
+    result = asyncio.run(
+        router.route_seeyouclaw_vision(
+            {
+                "text": "\u4f60\u89c9\u5f97\u6211\u4eca\u5929\u8fd9\u8eab\u600e\u4e48\u6837",
+                "cameraEnabled": True,
+                "cooldownActive": False,
+                "attachedImageCount": 0,
+                "maxImagesPerTurn": 4,
+                "context": None,
+            }
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["needVision"] is True
+    assert result["route"] == "vision_snapshot"
+    assert result["intent"] == "outfit_feedback"
+    assert result["slot"] == {"kind": "appearance", "questionType": "feedback"}
+    assert "outfit_feedback" in provider.kwargs["messages"][0]["content"]
+    assert "\u4f60\u89c9\u5f97\u6211\u4eca\u5929\u8fd9\u8eab\u600e\u4e48\u6837" in provider.kwargs["messages"][1]["content"]
 
 
 def test_llm_router_falls_back_on_malformed_response(monkeypatch):

@@ -424,6 +424,7 @@ export interface SendOptions {
   mcpPresets?: OutboundMcpPresetMention[];
   modelPreset?: string;
   workspaceScope?: WorkspaceScopePayload | null;
+  seeyouclawTelephone?: boolean;
 }
 
 export function useNanobotStream(

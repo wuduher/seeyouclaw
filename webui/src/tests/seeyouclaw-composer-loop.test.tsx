@@ -128,6 +128,35 @@ describe("seeyouclaw composer loop", () => {
     expect(await screen.findByText(/Vision snapshot: smart route/)).toBeInTheDocument();
   });
 
+  it("surfaces semantic router failures instead of silently hiding them", async () => {
+    mockCameraReady();
+    const onSend = vi.fn();
+    const onRouteVisionIntent = vi.fn(async () => {
+      throw new Error("router timed out");
+    });
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        onRouteVisionIntent={onRouteVisionIntent}
+        placeholder="Ask anything..."
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Turn camera on" }));
+    expect(await screen.findByText("Camera ready")).toBeInTheDocument();
+    markRenderedVideoReady();
+
+    const chairQuestion = "\u6211\u7684\u6905\u5b50\u662f\u4ec0\u4e48\u989c\u8272\u7684";
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: chairQuestion } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(onRouteVisionIntent).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledWith(chairQuestion, undefined, undefined);
+    expect(await screen.findByText(/remote vision router unavailable/)).toBeInTheDocument();
+  });
+
   it("falls back to text-only when camera capture fails", async () => {
     mockCameraFailure();
     const onSend = vi.fn();

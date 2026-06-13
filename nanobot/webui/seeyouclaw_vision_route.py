@@ -17,38 +17,37 @@ ROUTER_PRESET_CANDIDATES: tuple[str | None, ...] = (
     "deepseek-flash",
     None,
 )
-ROUTER_MAX_TOKENS = 220
+ROUTER_MAX_TOKENS = 120
 ROUTE_LEVELS = {"audio_only", "vision_snapshot", "vision_burst"}
 CONTEXT_KINDS = {"appearance", "emotion", "scene", "screen"}
 EMOTION_LEVELS = {"low", "medium", "high"}
 
-SYSTEM_PROMPT = """You are seeyouclaw's fast vision router.
+SYSTEM_PROMPT = """You are seeyouclaw's low-latency vision router.
 
-Decide whether the user's latest message requires a fresh camera snapshot.
-Use the active visual slot/context for short follow-ups such as "now?",
-"what about this?", "this color?", or Chinese equivalents like "现在呢".
+Return JSON only. Decide if the latest user message needs a fresh camera frame.
 
-Route to vision_snapshot when answering depends on current observable camera
-facts: visible objects, colors, counts, position, clothing, screen/OCR text,
-the user's visible state, or a strong emotional/stress change where observing
-the scene could improve safety or helpfulness.
+Use vision_snapshot when the answer depends on current visible facts: objects,
+colors, counts, positions, clothing/outfit/style, screen/OCR text, the current
+scene, or a strong emotional/stress cue where seeing the scene helps.
 
-Do not route for ordinary chat, preferences, memory-only questions, or general
-knowledge that does not depend on the user's current camera view. Avoid
-sensitive profiling such as age, identity, health diagnosis, attractiveness, or
-body evaluation.
+Use audio_only for ordinary chat, general knowledge, preferences, memory-only
+questions, or sensitive profiling. Avoid judging age, identity, health,
+attractiveness, or body shape.
+
+Context slots matter: if context says subject=shirt/color and the user says
+"now?", "this one?", "\u73b0\u5728\u5462", or
+"\u8fd9\u4e2a\u989c\u8272\u5462", keep routing to vision.
 
 Examples:
-- "我的椅子是什么颜色的" -> vision_snapshot, visual_attribute, subject chair, attribute color.
-- "我现在穿什么衣服" -> vision_snapshot, appearance_query.
-- Context: subject=shirt, attribute=color. "现在呢" -> vision_snapshot, contextual_followup.
-- "我慌死了，你看看我现在状态" -> vision_snapshot, emotion_shift, emotionEscalation high.
-- "天空是什么颜色" -> audio_only.
+"\u6211\u7684\u6905\u5b50\u662f\u4ec0\u4e48\u989c\u8272\u7684" => needVision true, route vision_snapshot, intent visual_attribute, slot {kind:scene, subject:chair, attribute:color}
+"\u6211\u73b0\u5728\u7a7f\u4ec0\u4e48\u8863\u670d" => true, vision_snapshot, appearance_query, slot {kind:appearance}
+"\u4f60\u89c9\u5f97\u6211\u4eca\u5929\u8fd9\u8eab\u600e\u4e48\u6837" => true, vision_snapshot, outfit_feedback, slot {kind:appearance}
+"\u8fd9\u5957\u642d\u914d\u9002\u5408\u9762\u8bd5\u5417" => true, vision_snapshot, outfit_feedback, slot {kind:appearance}
+"\u5929\u7a7a\u662f\u4ec0\u4e48\u989c\u8272" => false, audio_only, general_knowledge
 
-Return only a JSON object with:
-ok, needVision, route, intent, reason, confidence, emotionEscalation, slot,
-bypassCooldown.
-slot may contain kind, subject, attribute, questionType.
+Schema: {ok, needVision, route, intent, reason, confidence,
+emotionEscalation, slot, bypassCooldown}. route is audio_only or
+vision_snapshot. slot may contain kind, subject, attribute, questionType.
 """
 
 
@@ -198,6 +197,7 @@ async def route_seeyouclaw_vision(payload: dict[str, Any]) -> dict[str, Any]:
             tools=[],
             model=snapshot.model,
             max_tokens=ROUTER_MAX_TOKENS,
+            reasoning_effort="none",
             temperature=0.0,
         )
         raw = _json_from_model_text(response.content or "")

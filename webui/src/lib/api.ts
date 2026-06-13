@@ -29,7 +29,8 @@ import type {
 import { fetchWithTimeout } from "./http";
 
 const API_READ_TIMEOUT_MS = 20_000;
-const SEEYOUCLAW_VISION_ROUTE_TIMEOUT_MS = 3_000;
+const SEEYOUCLAW_VISION_ROUTE_TIMEOUT_MS = 5_500;
+const SEEYOUCLAW_TELEPHONE_SPEECH_TIMEOUT_MS = 60_000;
 
 export class ApiError extends Error {
   status: number;
@@ -52,6 +53,37 @@ export async function fetchSeeyouclawVisionRoute(
     token,
     undefined,
     SEEYOUCLAW_VISION_ROUTE_TIMEOUT_MS,
+  );
+}
+
+export interface SeeyouclawTelephoneSpeechRequest {
+  format?: "wav" | "mp3" | "pcm";
+  model?: string;
+  text: string;
+  voice?: string;
+}
+
+export interface SeeyouclawTelephoneSpeechResponse {
+  audioDataUrl?: string | null;
+  mimeType?: string | null;
+  model?: string;
+  ok: boolean;
+  reason?: string;
+  voice?: string;
+}
+
+export async function fetchSeeyouclawTelephoneSpeech(
+  token: string,
+  payload: SeeyouclawTelephoneSpeechRequest,
+  base: string = "",
+): Promise<SeeyouclawTelephoneSpeechResponse> {
+  const params = new URLSearchParams();
+  params.set("payload", JSON.stringify(payload));
+  return request<SeeyouclawTelephoneSpeechResponse>(
+    `${base}/api/seeyouclaw/telephone-speech?${params.toString()}`,
+    token,
+    undefined,
+    SEEYOUCLAW_TELEPHONE_SPEECH_TIMEOUT_MS,
   );
 }
 

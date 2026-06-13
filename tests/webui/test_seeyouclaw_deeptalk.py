@@ -92,6 +92,72 @@ def test_deeptalk_project_tracks_observation_and_hook_signals(tmp_path: Path) ->
     assert "observation window" in spec
 
 
+def test_deeptalk_project_covers_acceptance_scenarios(tmp_path: Path) -> None:
+    scenarios = [
+        {
+            "chatId": "emotional-chat",
+            "text": (
+                "I feel overwhelmed and uncertain about this relationship. "
+                "I do not need research yet; I need help naming what feels hard."
+            ),
+            "expected_signal": "Empathy signal",
+            "expected_question": "felt difficulty",
+            "expected_task": None,
+        },
+        {
+            "chatId": "research-chat",
+            "text": (
+                "I have a research idea about multimodal routing. Before choosing "
+                "a design, we may need literature, papers, benchmarks, and sources."
+            ),
+            "expected_signal": "Deepresearch gate",
+            "expected_question": "external evidence",
+            "expected_task": "focused research subagent",
+        },
+        {
+            "chatId": "blog-chat",
+            "text": (
+                "I want to turn this long conversation into a blog essay or article "
+                "with a clear why, argument, current shape, and next section."
+            ),
+            "expected_signal": "SDD signal",
+            "expected_question": "Which artifact",
+            "expected_task": "Name the core question",
+        },
+    ]
+
+    for scenario in scenarios:
+        created = ensure_deeptalk_project(
+            tmp_path,
+            {"chatId": scenario["chatId"], "title": "Scenario DeepTalk"},
+        )
+        project_id = created["project"]["id"]
+        updated = update_deeptalk_project(
+            tmp_path,
+            {"projectId": project_id, "userText": scenario["text"]},
+        )
+
+        summary = updated["project"]["summary"]
+        assert any(
+            scenario["expected_signal"] in item
+            for item in summary["proactive_signals"]
+        ), scenario["chatId"]
+        assert any(
+            scenario["expected_question"] in item
+            for item in summary["open_questions"]
+        ), scenario["chatId"]
+        if scenario["expected_task"] is not None:
+            assert any(
+                scenario["expected_task"] in item
+                for item in summary["tasks"]
+            ), scenario["chatId"]
+
+        files = updated["project"]["files"]
+        assert "OpenSpec-style state" in files["design"]
+        assert "Subagent and DeepResearch Gate" in files["design"]
+        assert scenario["text"] in files["notes"]
+
+
 def test_deeptalk_project_archive_creates_snapshot(tmp_path: Path) -> None:
     created = ensure_deeptalk_project(tmp_path, {"chatId": "chat-1", "title": "DeepTalk"})
     project_id = created["project"]["id"]

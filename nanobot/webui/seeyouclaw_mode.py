@@ -53,6 +53,14 @@ DEEPTALK_RUNTIME_LINES = [
         "belongs in tasks.md. Offer to capture decisions when they crystallize."
     ),
     (
+        "deeptalk subagent/deepresearch gate: keep emotional reflection, personal "
+        "meaning-making, and early project framing in the main conversation. Use "
+        "a focused subagent only when the user needs external evidence, literature "
+        "or source review, benchmark/competitor checks, codebase-wide investigation, "
+        "or another bounded research task that can run in parallel. When a subagent "
+        "is useful, state the research question and expected evidence before spawning it."
+    ),
+    (
         "deeptalk voice style: because telephone mode is voice-first, do not use "
         "long markdown during exploration. Make the structure audible in natural "
         "language, for example: 'I will hold three things: why this matters, the "

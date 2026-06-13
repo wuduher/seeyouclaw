@@ -55,22 +55,56 @@ PROJECT_KEYWORDS = (
     "research",
     "idea",
     "paper",
+    "essay",
+    "article",
     "blog",
+    "post",
     "\u9879\u76ee",
     "\u79d1\u7814",
     "\u60f3\u6cd5",
+    "\u6587\u7ae0",
+    "\u535a\u5ba2",
 )
 EMPATHY_KEYWORDS = (
     "stuck",
     "uncertain",
     "confused",
     "worried",
+    "sad",
+    "lonely",
+    "overwhelmed",
     "hard",
     "\u5361\u4f4f",
     "\u4e0d\u786e\u5b9a",
     "\u56f0\u60d1",
     "\u7126\u8651",
+    "\u96be\u8fc7",
+    "\u5b64\u72ec",
+    "\u538b\u529b",
     "\u96be",
+)
+DEEPRESEARCH_KEYWORDS = (
+    "literature",
+    "source",
+    "sources",
+    "citation",
+    "citations",
+    "benchmark",
+    "competitor",
+    "competitors",
+    "state of the art",
+    "external evidence",
+    "latest",
+    "recent",
+    "paper",
+    "papers",
+    "\u6587\u732e",
+    "\u8d44\u6599",
+    "\u5f15\u7528",
+    "\u8bba\u6587",
+    "\u8c03\u7814",
+    "\u7ade\u54c1",
+    "\u6700\u65b0",
 )
 OBSERVATION_KEYWORDS = (
     "camera",
@@ -417,6 +451,15 @@ def _update_summary_from_text(project: dict[str, Any], text: str, *, source: str
             summary["open_questions"],
             "What is the felt difficulty underneath this idea right now?",
         )
+    if _has_any(text, DEEPRESEARCH_KEYWORDS):
+        _append_unique(
+            summary["proactive_signals"],
+            "Deepresearch gate: use a subagent only for external evidence, sources, benchmarks, or codebase-wide investigation.",
+        )
+        _append_unique(
+            summary["open_questions"],
+            "What external evidence would change the direction of this DeepTalk?",
+        )
 
     if source == "user":
         if _has_any(text, ARCHIVE_KEYWORDS):
@@ -425,6 +468,11 @@ def _update_summary_from_text(project: dict[str, Any], text: str, *, source: str
             _append_unique(summary["tasks"], "Turn the exploration into a concrete design option.")
         elif _has_any(text, PROJECT_KEYWORDS):
             _append_unique(summary["tasks"], "Name the core question and expected artifact.")
+        if _has_any(text, DEEPRESEARCH_KEYWORDS):
+            _append_unique(
+                summary["tasks"],
+                "Decide whether to spawn a focused research subagent for external evidence.",
+            )
     project["summary"] = summary
 
 
@@ -478,6 +526,12 @@ def _write_markdown_files(project_dir: Path, project: Mapping[str, Any]) -> None
             "- Empathy and curiosity questions respond to the user's state, motivation, and uncertainty.",
             "- Multimodal observations should be treated as a recent window of frames or video context.",
             "- Hook nudges can surface stale questions, drift, pause, follow-up, or archive readiness.",
+            "",
+            "## Subagent and DeepResearch Gate",
+            "",
+            "- Emotional reflection, personal meaning-making, and early project framing stay in the main DeepTalk conversation.",
+            "- A focused subagent is useful only for external sources, literature review, benchmarks, competitor checks, or codebase-wide evidence.",
+            "- The main DeepTalk voice remains the host and synthesizer; research subagents return bounded evidence.",
             "",
         ]),
         encoding="utf-8",

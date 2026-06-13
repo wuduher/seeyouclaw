@@ -23,6 +23,8 @@ def test_deeptalk_runtime_lines_when_metadata_flag_set() -> None:
     assert "proposal.md" in " ".join(lines)
     assert "proactivity has three sources" in " ".join(lines).lower()
     assert "observation window" in " ".join(lines).lower()
+    assert "subagent/deepresearch gate" in " ".join(lines).lower()
+    assert "external evidence" in " ".join(lines).lower()
     assert "archive" in " ".join(lines).lower()
 
 

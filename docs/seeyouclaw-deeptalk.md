@@ -96,6 +96,24 @@ Some initiative should come from hooks rather than the main model prompt:
 The current sidecar accepts compact `hookText` nudges and records them as
 proactive signals. A later PR can wire these from nanobot hooks or WebUI timers.
 
+## Subagent and DeepResearch Gate
+
+DeepTalk should not spawn research work just because the conversation is deep.
+The main live conversation remains the host for emotional reflection, personal
+meaning-making, early project framing, and synthesis.
+
+A subagent or deepresearch-style task becomes useful when the user needs a
+bounded evidence-gathering job that can run in parallel:
+
+- literature, papers, citations, or source review
+- benchmark, competitor, or market checks
+- codebase-wide investigation
+- current facts or external evidence that would change the project direction
+
+When this gate is met, DeepTalk should name the research question and expected
+evidence before spawning a subagent. The subagent returns evidence; the main
+DeepTalk voice remains responsible for synthesis and next-question hosting.
+
 ## Runtime Integration
 
 DeepTalk enters through an explicit `DEEPTALK` toggle on the telephone page.
@@ -153,6 +171,9 @@ Expected result:
 - It names a compact project frame, such as why/current shape/open question/next step.
 - It asks exactly one focused question.
 - The right sidebar shows Why, Current, Questions, Signals, and Tasks.
+- If external papers, citations, benchmarks, or codebase evidence become
+  necessary, Signals should surface a deepresearch/subagent gate rather than
+  spawning one for ordinary emotional reflection.
 
 Follow-up prompt:
 
@@ -183,6 +204,8 @@ Expected result:
 
 - Replace the deterministic updater with a separate low-cost DeepTalk sidecar
   agent that proposes structured spec diffs.
+- Add an explicit UI affordance for approving a focused research subagent when
+  the deepresearch gate is met.
 - Feed `observationText` from multi-frame or short-video analysis.
 - Feed `hookText` from pause, drift, unresolved-question, and follow-up hooks.
 - Add user-approved export controls for saving selected DeepTalk projects into

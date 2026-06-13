@@ -44,7 +44,14 @@ import type { ChatSummary, UIMessage, WorkspaceScopePayload } from "@/lib/types"
 import { cn } from "@/lib/utils";
 import { useClient } from "@/providers/ClientProvider";
 
-type TelephoneMode = "idle" | "connecting" | "listening" | "thinking" | "speaking" | "error";
+type TelephoneMode =
+  | "idle"
+  | "connecting"
+  | "listening"
+  | "muted"
+  | "thinking"
+  | "speaking"
+  | "error";
 
 interface SeeyouclawTelephonePageProps {
   onCreateChat: (workspaceScope?: WorkspaceScopePayload | null) => Promise<string | null>;
@@ -128,7 +135,7 @@ export function SeeyouclawTelephonePage({
   const [micMuted, setMicMuted] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");
   const [lastUserText, setLastUserText] = useState("");
-  const [routeLabel, setRouteLabel] = useState("Audio only");
+  const [routeLabel, setRouteLabel] = useState("Camera standby");
   const [speechLabel, setSpeechLabel] = useState("Ready");
   const [error, setError] = useState<string | null>(null);
 
@@ -163,6 +170,16 @@ export function SeeyouclawTelephonePage({
       setSpeechLabel("Thinking");
     }
   }, [active, isStreaming]);
+
+  useEffect(() => {
+    if (!active) {
+      if (camera.state !== "ready") setRouteLabel("Camera standby");
+      return;
+    }
+    if (camera.state === "starting") setRouteLabel("Camera starting");
+    else if (camera.state === "ready") setRouteLabel("Camera ready");
+    else if (camera.state === "error") setRouteLabel("Audio only: camera unavailable");
+  }, [active, camera.state]);
 
   const stopListening = useCallback((abort = false) => {
     const recognition = recognitionRef.current;
@@ -417,12 +434,20 @@ export function SeeyouclawTelephonePage({
     setError(null);
     setActive(true);
     setMode("connecting");
+    setSpeechLabel("Connecting");
     const opened = await ensureChat();
-    if (!opened) return;
+    if (!opened) {
+      setActive(false);
+      setSpeechLabel("Ready");
+      return;
+    }
     latestSpokenAssistantIdRef.current = assistant?.id ?? null;
     await camera.start();
     if (canUseSpeechRecognition && !micMutedRef.current) startListening();
-    else {
+    else if (micMutedRef.current) {
+      setMode("muted");
+      setSpeechLabel("Muted");
+    } else {
       setMode(canUseSpeechRecognition ? "listening" : "error");
       if (!canUseSpeechRecognition) setError("Speech recognition unavailable");
     }
@@ -439,7 +464,9 @@ export function SeeyouclawTelephonePage({
     setActive(false);
     setMode("idle");
     setSpeechLabel("Ready");
+    setMicMuted(false);
     setInterimTranscript("");
+    setLastUserText("");
     stopListening(true);
     stopSpeech();
     camera.stop();
@@ -449,8 +476,15 @@ export function SeeyouclawTelephonePage({
   const toggleMic = useCallback(() => {
     setMicMuted((current) => {
       const next = !current;
-      if (next) stopListening(true);
-      else if (activeRef.current) window.setTimeout(startListening, 100);
+      if (next) {
+        stopListening(true);
+        setMode("muted");
+        setSpeechLabel("Muted");
+      } else if (activeRef.current) {
+        setMode("listening");
+        setSpeechLabel("Listening");
+        window.setTimeout(startListening, 100);
+      }
       return next;
     });
   }, [startListening, stopListening]);
@@ -459,8 +493,9 @@ export function SeeyouclawTelephonePage({
     return () => {
       stopListening(true);
       stopSpeech();
+      camera.stop();
     };
-  }, [stopListening, stopSpeech]);
+  }, [camera.stop, stopListening, stopSpeech]);
 
   const streamErrorText = streamError
     ? (streamError.kind === "message_too_big" ? "Message too large" : "Workspace rejected")
@@ -468,10 +503,13 @@ export function SeeyouclawTelephonePage({
   const statusText = error || streamErrorText || speechLabel;
   const liveText = interimTranscript || lastUserText || "seeyouclaw";
   const pulseActive = active && (mode === "listening" || mode === "speaking" || isStreaming);
+  const ambientMotion = mode === "idle" || mode === "connecting" || mode === "muted";
   const levels = mode === "speaking"
     ? [26, 42, 32, 54, 38, 48, 28]
     : mode === "listening"
       ? [18, 28, 42, 34, 50, 30, 22]
+      : mode === "muted"
+        ? [8, 10, 8, 12, 8, 10, 8]
       : [12, 16, 14, 20, 16, 14, 12];
 
   return (
@@ -518,12 +556,13 @@ export function SeeyouclawTelephonePage({
               className={cn(
                 "absolute h-36 w-36 rounded-full border border-emerald-300/30",
                 pulseActive && "animate-ping",
+                ambientMotion && "motion-safe:animate-pulse",
               )}
             />
             <div
               className={cn(
                 "absolute h-48 w-48 rounded-full border border-cyan-200/15",
-                mode === "speaking" && "animate-pulse",
+                (mode === "speaking" || ambientMotion) && "motion-safe:animate-pulse",
               )}
             />
             <div className="relative flex h-28 w-28 items-center justify-center rounded-full border border-white/15 bg-black/45 shadow-2xl backdrop-blur">
@@ -542,9 +581,9 @@ export function SeeyouclawTelephonePage({
                 key={index}
                 className={cn(
                   "w-1.5 rounded-full bg-emerald-200/85 transition-all duration-300",
-                  pulseActive && "animate-pulse",
+                  (pulseActive || ambientMotion) && "motion-safe:animate-pulse",
                 )}
-                style={{ height }}
+                style={{ height, animationDelay: `${index * 90}ms` }}
               />
             ))}
           </div>

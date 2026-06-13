@@ -29,6 +29,13 @@ DEEPTALK_RUNTIME_LINES = [
         "or Next step; then ask exactly one focused confirming question."
     ),
     (
+        "deeptalk spoken guidance loop: use reusable voice-first moves so structure "
+        "is audible rather than hidden in markdown. Choose the useful move for the "
+        "turn: Mirror, Frame, Offer lanes, Research gate, Archive checkpoint, then "
+        "One-question close. If the user is vague or uncertain, offer two or three "
+        "lanes before asking them to choose."
+    ),
+    (
         "deeptalk explore protocol: keep an OpenSpec-inspired structure in mind. "
         "proposal.md captures why this matters, design.md captures current state "
         "and approach, tasks.md captures ordered next steps, and "

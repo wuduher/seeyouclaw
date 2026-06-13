@@ -11,6 +11,7 @@ import {
   CircleHelp,
   FolderKanban,
   ListChecks,
+  MessagesSquare,
   Mic,
   MicOff,
   PanelLeft,
@@ -1006,6 +1007,21 @@ export function SeeyouclawTelephonePage({
                       <div className="space-y-1">
                         {(deepTalkProject?.summary.open_questions?.slice(0, 3) ?? [
                           "What concrete outcome should this DeepTalk produce?",
+                        ]).map((item) => (
+                          <div key={item} className="line-clamp-2 break-words">
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="border-t border-border/55 pt-2">
+                      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase text-muted-foreground">
+                        <MessagesSquare className="h-3 w-3" />
+                        Moves
+                      </div>
+                      <div className="space-y-1">
+                        {(deepTalkProject?.summary.guidance_moves?.slice(0, 3) ?? [
+                          "Mirror, frame, offer lanes, and close with one question.",
                         ]).map((item) => (
                           <div key={item} className="line-clamp-2 break-words">
                             {item}

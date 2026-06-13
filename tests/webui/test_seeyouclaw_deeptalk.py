@@ -27,6 +27,8 @@ def test_deeptalk_project_creation_writes_openspec_shape(tmp_path: Path) -> None
     assert project["summary"]["why"] == "Explore a low-cost multimodal routing idea."
     assert any("SDD questions" in item for item in project["summary"]["proactive_signals"])
     assert any("Multimodal observation window" in item for item in project["summary"]["proactive_signals"])
+    assert any("Mirror" in item for item in project["summary"]["guidance_moves"])
+    assert any("Offer lanes" in item for item in project["summary"]["guidance_moves"])
     assert (project_dir / "proposal.md").exists()
     assert (project_dir / "design.md").exists()
     assert (project_dir / "tasks.md").exists()
@@ -62,6 +64,7 @@ def test_deeptalk_project_updates_summary_and_notes(tmp_path: Path) -> None:
     assert any("How should we design" in item for item in project["summary"]["open_questions"])
     assert any("concrete design option" in item for item in project["summary"]["tasks"])
     assert any("SDD signal" in item for item in project["summary"]["proactive_signals"])
+    assert any("Frame" in item for item in project["summary"]["guidance_moves"])
     notes = (project_dir / "notes.md").read_text(encoding="utf-8")
     assert "## Turn 1 - User" in notes
     assert "## Turn 1 - Assistant" in notes
@@ -84,12 +87,41 @@ def test_deeptalk_project_tracks_observation_and_hook_signals(tmp_path: Path) ->
     project_dir = tmp_path / project["path"]
     assert any("Observation-window signal" in item for item in project["summary"]["proactive_signals"])
     assert any("Hook signal" in item for item in project["summary"]["proactive_signals"])
+    assert any("Observation window" in item for item in project["summary"]["guidance_moves"])
+    assert any("Checkpoint" in item for item in project["summary"]["guidance_moves"])
     assert any("visual window" in item for item in project["summary"]["open_questions"])
     notes = (project_dir / "notes.md").read_text(encoding="utf-8")
     assert "## Turn 1 - Observation" in notes
     assert "## Turn 1 - Hook" in notes
     spec = (project_dir / "specs" / "main" / "spec.md").read_text(encoding="utf-8")
     assert "observation window" in spec
+    assert "Guide spoken turns" in spec
+
+
+def test_deeptalk_project_records_spoken_guidance_moves(tmp_path: Path) -> None:
+    created = ensure_deeptalk_project(tmp_path, {"chatId": "chat-1", "title": "DeepTalk"})
+    project_id = created["project"]["id"]
+
+    updated = update_deeptalk_project(
+        tmp_path,
+        {
+            "projectId": project_id,
+            "userText": (
+                "I am not sure where this is going; maybe it is an essay, "
+                "maybe a project, and I feel overwhelmed."
+            ),
+        },
+    )
+
+    project = updated["project"]
+    moves = project["summary"]["guidance_moves"]
+    assert any("Mirror" in item for item in moves)
+    assert any("Frame" in item for item in moves)
+    assert any("Offer lanes" in item for item in moves)
+    assert any("One-question close" in item for item in moves)
+    assert "Spoken Guidance Moves" in project["files"]["proposal"]
+    assert "Voice Guidance Loop" in project["files"]["design"]
+    assert "Guide spoken turns" in project["files"]["spec"]
 
 
 def test_deeptalk_project_covers_acceptance_scenarios(tmp_path: Path) -> None:
@@ -154,6 +186,7 @@ def test_deeptalk_project_covers_acceptance_scenarios(tmp_path: Path) -> None:
 
         files = updated["project"]["files"]
         assert "OpenSpec-style state" in files["design"]
+        assert "Voice Guidance Loop" in files["design"]
         assert "Subagent and DeepResearch Gate" in files["design"]
         assert scenario["text"] in files["notes"]
 

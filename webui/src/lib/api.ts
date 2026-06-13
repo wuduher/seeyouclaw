@@ -90,6 +90,7 @@ export async function fetchSeeyouclawTelephoneSpeech(
 
 export interface SeeyouclawDeepTalkSummary {
   current: string;
+  guidance_moves: string[];
   open_questions: string[];
   proactive_signals: string[];
   tasks: string[];

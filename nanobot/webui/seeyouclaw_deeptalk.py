@@ -30,6 +30,13 @@ DEFAULT_PROACTIVE_SIGNALS = [
     "Hook nudges: revisit stale questions, drift, long pauses, repeated uncertainty, or archive readiness.",
 ]
 
+DEFAULT_GUIDANCE_MOVES = [
+    "Mirror: name the user's felt state or core idea in one warm sentence.",
+    "Frame: say the project shape out loud with Why, Current, and Next labels.",
+    "Offer lanes: when the user is vague, offer two or three paths and ask them to choose.",
+    "One-question close: end with exactly one concrete confirming question.",
+]
+
 ARCHIVE_KEYWORDS = (
     "archive",
     "archived",
@@ -119,6 +126,22 @@ OBSERVATION_KEYWORDS = (
     "\u89c6\u9891",
     "\u8868\u60c5",
 )
+VAGUE_KEYWORDS = (
+    "maybe",
+    "not sure",
+    "unclear",
+    "vague",
+    "somehow",
+    "i don't know",
+    "unsure",
+    "uncertain",
+    "ambiguous",
+    "\u4e5f\u8bb8",
+    "\u4e0d\u77e5\u9053",
+    "\u4e0d\u786e\u5b9a",
+    "\u6a21\u7cca",
+    "\u8bf4\u4e0d\u6e05",
+)
 
 
 def ensure_deeptalk_project(workspace_path: Path, payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -158,6 +181,7 @@ def ensure_deeptalk_project(workspace_path: Path, payload: Mapping[str, Any]) ->
                 "Choose one concrete artifact to preserve.",
             ],
             "proactive_signals": list(DEFAULT_PROACTIVE_SIGNALS),
+            "guidance_moves": list(DEFAULT_GUIDANCE_MOVES),
         },
     }
     project_dir = _project_dir(workspace_path, project_id)
@@ -331,12 +355,16 @@ def _summary(project: Mapping[str, Any]) -> dict[str, Any]:
     proactive = [str(x) for x in raw.get("proactive_signals") or [] if str(x).strip()]
     if not proactive:
         proactive = list(DEFAULT_PROACTIVE_SIGNALS)
+    guidance = [str(x) for x in raw.get("guidance_moves") or [] if str(x).strip()]
+    if not guidance:
+        guidance = list(DEFAULT_GUIDANCE_MOVES)
     return {
         "why": str(raw.get("why") or ""),
         "current": str(raw.get("current") or ""),
         "open_questions": [str(x) for x in raw.get("open_questions") or [] if str(x).strip()],
         "tasks": [str(x) for x in raw.get("tasks") or [] if str(x).strip()],
         "proactive_signals": proactive[-MAX_LIST_ITEMS:],
+        "guidance_moves": guidance[-MAX_LIST_ITEMS:],
     }
 
 
@@ -421,6 +449,10 @@ def _update_summary_from_text(project: dict[str, Any], text: str, *, source: str
             "Observation-window signal: ask what changed across the available frames or video.",
         )
         _append_unique(
+            summary["guidance_moves"],
+            "Observation window: ask what changed across recent frames before interpreting the user.",
+        )
+        _append_unique(
             summary["open_questions"],
             "What does the recent visual window change about the user's state or project direction?",
         )
@@ -428,6 +460,10 @@ def _update_summary_from_text(project: dict[str, Any], text: str, *, source: str
         _append_unique(
             summary["proactive_signals"],
             "Hook signal: decide whether to revisit, split, archive, or advance the current thread.",
+        )
+        _append_unique(
+            summary["guidance_moves"],
+            "Checkpoint: decide whether to revisit, split, archive, or advance the thread.",
         )
         _append_unique(
             summary["open_questions"],
@@ -439,6 +475,10 @@ def _update_summary_from_text(project: dict[str, Any], text: str, *, source: str
             "SDD signal: map this turn to proposal, design, requirements, scenarios, or tasks.",
         )
         _append_unique(
+            summary["guidance_moves"],
+            "Frame: restate the current project lane as Why, Current, and Next before asking.",
+        )
+        _append_unique(
             summary["open_questions"],
             "Which artifact should this become: proposal, design decision, requirement, scenario, or task?",
         )
@@ -448,13 +488,26 @@ def _update_summary_from_text(project: dict[str, Any], text: str, *, source: str
             "Empathy signal: ask from the user's uncertainty or felt difficulty before structuring.",
         )
         _append_unique(
+            summary["guidance_moves"],
+            "Mirror: validate the felt difficulty before converting it into structure.",
+        )
+        _append_unique(
             summary["open_questions"],
             "What is the felt difficulty underneath this idea right now?",
+        )
+    if _has_any(text, VAGUE_KEYWORDS):
+        _append_unique(
+            summary["guidance_moves"],
+            "Offer lanes: give two or three possible directions before asking the user to choose.",
         )
     if _has_any(text, DEEPRESEARCH_KEYWORDS):
         _append_unique(
             summary["proactive_signals"],
             "Deepresearch gate: use a subagent only for external evidence, sources, benchmarks, or codebase-wide investigation.",
+        )
+        _append_unique(
+            summary["guidance_moves"],
+            "Research gate: ask what external evidence would change the decision before spawning a subagent.",
         )
         _append_unique(
             summary["open_questions"],
@@ -464,6 +517,10 @@ def _update_summary_from_text(project: dict[str, Any], text: str, *, source: str
     if source == "user":
         if _has_any(text, ARCHIVE_KEYWORDS):
             _append_unique(summary["tasks"], "Archive the current exploration snapshot.")
+            _append_unique(
+                summary["guidance_moves"],
+                "Archive checkpoint: confirm scope, then preserve proposal, design, tasks, and specs.",
+            )
         elif _has_any(text, DESIGN_KEYWORDS):
             _append_unique(summary["tasks"], "Turn the exploration into a concrete design option.")
         elif _has_any(text, PROJECT_KEYWORDS):
@@ -486,6 +543,7 @@ def _write_markdown_files(project_dir: Path, project: Mapping[str, Any]) -> None
     questions = _markdown_list(summary["open_questions"])
     tasks = "\n".join(f"- [ ] {item}" for item in summary["tasks"]) or "- [ ] TBD"
     proactive = _markdown_list(summary["proactive_signals"])
+    guidance = _markdown_list(summary["guidance_moves"])
     project_dir.mkdir(parents=True, exist_ok=True)
     (project_dir / "proposal.md").write_text(
         "\n".join([
@@ -502,6 +560,10 @@ def _write_markdown_files(project_dir: Path, project: Mapping[str, Any]) -> None
             "## Proactive Signals",
             "",
             proactive,
+            "",
+            "## Spoken Guidance Moves",
+            "",
+            guidance,
             "",
         ]),
         encoding="utf-8",
@@ -526,6 +588,13 @@ def _write_markdown_files(project_dir: Path, project: Mapping[str, Any]) -> None
             "- Empathy and curiosity questions respond to the user's state, motivation, and uncertainty.",
             "- Multimodal observations should be treated as a recent window of frames or video context.",
             "- Hook nudges can surface stale questions, drift, pause, follow-up, or archive readiness.",
+            "",
+            "## Voice Guidance Loop",
+            "",
+            "- Mirror the user's state or core idea in one sentence.",
+            "- Frame the lane out loud with Why, Current, and Next labels.",
+            "- Offer two or three lanes when the next step is ambiguous.",
+            "- Close with exactly one focused question.",
             "",
             "## Subagent and DeepResearch Gate",
             "",
@@ -584,6 +653,16 @@ def _write_markdown_files(project_dir: Path, project: Mapping[str, Any]) -> None
             "- WHEN multiple frames or a short video-derived observation are available",
             "- THEN DeepTalk SHOULD ask from the observed change over time",
             "- AND it SHOULD avoid storing sensitive visual profile facts unless approved",
+            "",
+            "### Requirement: Guide spoken turns with reusable moves",
+            "",
+            "DeepTalk SHOULD use short spoken guidance moves so structure is audible, not hidden in markdown.",
+            "",
+            "#### Scenario: User is vague or emotionally loaded",
+            "",
+            "- WHEN the user gives an uncertain, emotional, or open-ended turn",
+            "- THEN DeepTalk SHOULD mirror, frame, optionally offer lanes, and ask one question",
+            "- AND the sidecar SHOULD record the active guidance move",
             "",
         ]),
         encoding="utf-8",

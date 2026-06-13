@@ -29,6 +29,7 @@ const deepTalkApiMock = vi.hoisted(() => {
     path: ".seeyouclaw/deeptalk/projects/20260613-deeptalk-test",
     summary: {
       current: "Current project shape",
+      guidance_moves: ["Mirror, frame, and offer lanes"],
       open_questions: ["What should this become?"],
       proactive_signals: ["SDD questions and observation windows"],
       tasks: ["Clarify the artifact."],
@@ -224,6 +225,7 @@ describe("SeeyouclawTelephonePage", () => {
     ));
     expect(screen.getByText("Project")).toBeInTheDocument();
     expect(screen.getByText("Research exploration")).toBeInTheDocument();
+    expect(screen.getByText("Mirror, frame, and offer lanes")).toBeInTheDocument();
     expect(screen.getByText("SDD questions and observation windows")).toBeInTheDocument();
   });
 

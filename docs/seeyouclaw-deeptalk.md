@@ -114,6 +114,27 @@ When this gate is met, DeepTalk should name the research question and expected
 evidence before spawning a subagent. The subagent returns evidence; the main
 DeepTalk voice remains responsible for synthesis and next-question hosting.
 
+## Spoken Guidance Moves
+
+The practical weakness in voice mode is that structure can stay hidden in the
+prompt or sidecar files. DeepTalk needs audible hosting moves: short reusable
+turn patterns that the user can hear without seeing markdown.
+
+The current project sidecar records these moves in `summary.guidance_moves`,
+shows them in the telephone panel, and writes them into `proposal.md` and
+`design.md`.
+
+- Mirror: name the user's felt state or core idea in one warm sentence.
+- Frame: say the project shape out loud with Why, Current, and Next labels.
+- Offer lanes: when the user is vague, offer two or three paths and ask them to choose.
+- Research gate: ask what external evidence would change the decision before spawning a subagent.
+- Archive checkpoint: confirm scope, then preserve proposal, design, tasks, and specs.
+- One-question close: end with exactly one concrete confirming question.
+
+For speech, this should sound like a light hosting loop, not a written outline:
+"I hear the uncertainty. I can hold this as either an emotional reflection, a
+research direction, or a blog argument; which lane should we take first?"
+
 ## Runtime Integration
 
 DeepTalk enters through an explicit `DEEPTALK` toggle on the telephone page.
@@ -169,8 +190,10 @@ Expected result:
 
 - The assistant reflects the uncertainty or motivation.
 - It names a compact project frame, such as why/current shape/open question/next step.
+- It uses an audible guidance move: mirror, frame, offer lanes, research gate,
+  archive checkpoint, or one-question close.
 - It asks exactly one focused question.
-- The right sidebar shows Why, Current, Questions, Signals, and Tasks.
+- The right sidebar shows Why, Current, Questions, Moves, Signals, and Tasks.
 - If external papers, citations, benchmarks, or codebase evidence become
   necessary, Signals should surface a deepresearch/subagent gate rather than
   spawning one for ordinary emotional reflection.

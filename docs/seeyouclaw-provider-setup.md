@@ -105,6 +105,17 @@ Notes:
 - When no cloud transcription provider is configured, WebUI can fall back to
   browser speech recognition for a local demo path.
 
+## Qwen Omni Telephone Audio
+
+The telephone page uses the same DashScope credential and calls
+`qwen3-omni-flash` with `modalities: ["text", "audio"]`,
+`audio: { "voice": "Ethan", "format": "wav" }`, and `stream: true`.
+
+No extra secret is needed beyond `DASHSCOPE_API_KEY`. The WebUI endpoint is
+protected by the normal WebUI API token and returns a browser-playable audio
+data URL. If the provider is unavailable, the telephone page falls back to the
+browser's built-in speech synthesis.
+
 ## WebUI Gateway
 
 For the browser demo, keep WebUI local by default:
@@ -144,9 +155,13 @@ To switch to a different provider, change only:
 - `agents.defaults.modelPreset`
 - `transcription.provider`
 - `transcription.model`
+- telephone speech `model` / `voice` constants in the seeyouclaw telephone
+  module, if the audio voice provider changes
 
 DeepSeek is currently used as the low-latency text provider. DashScope Qwen ASR
 handles speech-to-text. The router uses DeepSeek only for locally ambiguous
 text turns; obvious visual requests and ordinary turns stay on the local rule
 path. For stronger visual understanding, add a vision-capable provider preset
-and route image-heavy turns to that preset in a later PR.
+and route image-heavy turns to that preset in a later PR. Qwen Omni is used only
+for the telephone page's reply audio layer, while the actual response still
+comes from nanobot's normal context-managed agent loop.

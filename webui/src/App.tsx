@@ -13,6 +13,7 @@ import { RenameChatDialog } from "@/components/RenameChatDialog";
 import { Sidebar } from "@/components/Sidebar";
 import { SessionSearchDialog } from "@/components/SessionSearchDialog";
 import { SettingsView, type SettingsSectionKey } from "@/components/settings/SettingsView";
+import { SeeyouclawTelephonePage } from "@/components/seeyouclaw/SeeyouclawTelephonePage";
 import { ThreadShell } from "@/components/thread/ThreadShell";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 
@@ -70,7 +71,7 @@ const SIDEBAR_WIDTH = 272;
 const SIDEBAR_RAIL_WIDTH = 56;
 const TOKEN_REFRESH_MARGIN_MS = 30_000;
 const TOKEN_REFRESH_MIN_DELAY_MS = 5_000;
-type ShellView = "chat" | "settings" | "apps" | "skills";
+type ShellView = "chat" | "settings" | "apps" | "skills" | "telephone";
 type ShellRoute = {
   view: ShellView;
   activeKey: string | null;
@@ -131,6 +132,9 @@ function readShellRoute(): ShellRoute {
   if (path === "/skills") {
     return { view: "skills", activeKey, settingsSection: "skills" };
   }
+  if (path === "/telephone") {
+    return { view: "telephone", activeKey, settingsSection: "overview" };
+  }
   if (path.startsWith("/chat/")) {
     const encoded = path.slice("/chat/".length);
     try {
@@ -150,6 +154,12 @@ function shellRouteHash(route: ShellRoute): string {
     return route.activeKey
       ? `#/chat/${encodeURIComponent(route.activeKey)}`
       : "#/new";
+  }
+  if (route.view === "telephone") {
+    const params = new URLSearchParams();
+    if (route.activeKey) params.set("chat", route.activeKey);
+    const query = params.toString();
+    return `#/telephone${query ? `?${query}` : ""}`;
   }
   const params = new URLSearchParams();
   if (route.activeKey) params.set("chat", route.activeKey);
@@ -1161,6 +1171,40 @@ function Shell({
     setMobileSidebarOpen(false);
   }, [activeKey, navigate]);
 
+  const onOpenTelephone = useCallback(() => {
+    setSessionSearchOpen(false);
+    navigate({ view: "telephone", activeKey, settingsSection: "overview" });
+    setMobileSidebarOpen(false);
+  }, [activeKey, navigate]);
+
+  const onCreateTelephoneChat = useCallback(async (
+    workspaceScope?: WorkspaceScopePayload | null,
+  ) => {
+    try {
+      const scope = workspaceScope ?? activeWorkspaceScope;
+      const chatId = await createChat(scope);
+      const key = `websocket:${chatId}`;
+      navigate({
+        view: "telephone",
+        activeKey: key,
+        settingsSection: "overview",
+      });
+      if (scope) {
+        setWorkspaceOverrides((current) => ({
+          ...current,
+          [chatId]: normalizeWorkspaceScope(scope),
+        }));
+      }
+      return chatId;
+    } catch (e) {
+      console.error("Failed to create telephone chat", e);
+      if (e instanceof Error && e.message.startsWith("workspace_scope_rejected:")) {
+        setWorkspaceError(t("errors.workspaceScopeRejected.body"));
+      }
+      return null;
+    }
+  }, [activeWorkspaceScope, createChat, navigate, t]);
+
   const onSettingsSectionChange = useCallback(
     (section: SettingsSectionKey) => {
       navigate({
@@ -1322,6 +1366,12 @@ function Shell({
       });
       return;
     }
+    if (view === "telephone") {
+      document.title = t("app.documentTitle.chat", {
+        title: "seeyouclaw telephone",
+      });
+      return;
+    }
     document.title = activeSession
       ? t("app.documentTitle.chat", { title: headerTitle })
       : t("app.documentTitle.base");
@@ -1344,8 +1394,9 @@ function Shell({
     onOpenSettings,
     onOpenApps,
     onOpenSkills,
+    onOpenTelephone,
     onOpenSearch: onOpenSessionSearch,
-    activeUtility: view === "apps" || view === "skills" ? view : null,
+    activeUtility: view === "apps" || view === "skills" || view === "telephone" ? view : null,
     onToggleArchived,
     pinnedKeys: sidebarState.pinned_keys,
     archivedKeys: sidebarState.archived_keys,
@@ -1531,7 +1582,18 @@ function Shell({
                 onOpenModelSettings={onOpenModelSettings}
               />
             </div>
-            {view !== "chat" && (
+            {view === "telephone" ? (
+              <div className="absolute inset-0 flex flex-col">
+                <SeeyouclawTelephonePage
+                  session={activeSession}
+                  title={headerTitle}
+                  onCreateChat={onCreateTelephoneChat}
+                  onToggleSidebar={toggleSidebar}
+                  workspaceScope={activeWorkspaceScope}
+                />
+              </div>
+            ) : null}
+            {view !== "chat" && view !== "telephone" && (
               <div className="absolute inset-0 flex flex-col">
                 <SettingsView
                   theme={theme}

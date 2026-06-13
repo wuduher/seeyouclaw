@@ -3,6 +3,7 @@ import {
   Archive,
   Brain,
   Menu,
+  Phone,
   Search,
   Settings,
   SquarePen,
@@ -36,8 +37,9 @@ interface SidebarProps {
   onOpenSettings: () => void;
   onOpenApps: () => void;
   onOpenSkills: () => void;
+  onOpenTelephone: () => void;
   onOpenSearch: () => void;
-  activeUtility?: "apps" | "skills" | null;
+  activeUtility?: "apps" | "skills" | "telephone" | null;
   onToggleArchived: () => void;
   onCollapse: () => void;
   onExpand?: () => void;
@@ -151,6 +153,13 @@ export function Sidebar(props: SidebarProps) {
           label={t("sidebar.searchAria")}
           onClick={props.onOpenSearch}
           icon={<Search className="h-4 w-4" />}
+        />
+        <SidebarActionButton
+          collapsed={collapsed}
+          label={t("sidebar.telephone", { defaultValue: "Telephone" })}
+          onClick={props.onOpenTelephone}
+          active={props.activeUtility === "telephone"}
+          icon={<Phone className="h-4 w-4" />}
         />
         <SidebarActionButton
           collapsed={collapsed}

@@ -132,6 +132,39 @@ def test_resolver_supports_dashscope_transcription_provider() -> None:
     assert resolved.api_base == "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 
+def test_resolver_expands_dashscope_transcription_env_placeholders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = Config()
+    config.transcription.provider = "dashscope"
+    config.providers.dashscope.api_key = "${DASHSCOPE_API_KEY}"
+    config.providers.dashscope.api_base = "${DASHSCOPE_API_BASE}"
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "dashscope-env-key")
+    monkeypatch.setenv("DASHSCOPE_API_BASE", "https://dashscope.example/v1")
+
+    resolved = resolve_transcription_config(config)
+
+    assert resolved.provider == "dashscope"
+    assert resolved.api_key == "dashscope-env-key"
+    assert resolved.api_base == "https://dashscope.example/v1"
+    assert resolved.configured is True
+
+
+def test_resolver_treats_missing_transcription_env_key_as_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = Config()
+    config.transcription.provider = "dashscope"
+    config.providers.dashscope.api_key = "${DASHSCOPE_API_KEY}"
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+
+    resolved = resolve_transcription_config(config)
+
+    assert resolved.provider == "dashscope"
+    assert resolved.api_key == ""
+    assert resolved.configured is False
+
+
 def test_resolver_supports_siliconflow_transcription_provider() -> None:
     config = Config()
     config.transcription.provider = "siliconflow"

@@ -574,6 +574,8 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 function transcriptionErrorKey(error: unknown): VoiceRecorderErrorKey {
   const detail = error instanceof Error ? error.message : "";
   if (detail === "not_configured") return "notConfigured";
-  if (detail === "duration") return "tooLong";
+  if (detail === "duration" || detail === "size") return "tooLong";
+  if (detail === "empty") return "noInput";
+  if (detail === "mime") return "unsupported";
   return "failed";
 }

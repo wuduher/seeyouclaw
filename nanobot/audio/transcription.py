@@ -9,6 +9,7 @@ HTTP details; those live in ``nanobot.providers.transcription``.
 from __future__ import annotations
 
 import os
+import re
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +29,7 @@ TranscriptionProviderName = str
 
 _DEFAULT_PROVIDER: TranscriptionProviderName = "groq"
 _MAX_AUDIO_BYTES_FALLBACK = 25 * 1024 * 1024
+_ENV_REF_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _AUDIO_MIME_ALLOWED: frozenset[str] = frozenset({
     "audio/aac",
     "audio/flac",
@@ -81,8 +83,28 @@ def _provider_default_api_base(provider: str) -> str | None:
     return spec.default_api_base if spec else None
 
 
+def _resolve_env_placeholders(value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        return ""
+
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        resolved = os.environ.get(name)
+        if resolved is None:
+            logger.warning(
+                "Environment variable {} referenced in transcription config is not set",
+                name,
+            )
+            return ""
+        return resolved
+
+    return _ENV_REF_PATTERN.sub(replace, value)
+
+
 def _resolve_transcription_api_key(provider: str, provider_cfg: Any) -> str:
-    api_key = getattr(provider_cfg, "api_key", None) if provider_cfg else None
+    api_key = _resolve_env_placeholders(
+        getattr(provider_cfg, "api_key", None) if provider_cfg else None
+    )
     if api_key:
         return api_key
 
@@ -93,11 +115,13 @@ def _resolve_transcription_api_key(provider: str, provider_cfg: Any) -> str:
             return env_key
 
     env_key = spec.env_key if spec else ""
-    return os.environ.get(env_key) if env_key else ""
+    return os.environ.get(env_key, "") if env_key else ""
 
 
 def _resolve_transcription_api_base(provider: str, provider_cfg: Any) -> str:
-    api_base = getattr(provider_cfg, "api_base", None) if provider_cfg else None
+    api_base = _resolve_env_placeholders(
+        getattr(provider_cfg, "api_base", None) if provider_cfg else None
+    )
     if api_base:
         return api_base
     return _provider_default_api_base(provider) or ""

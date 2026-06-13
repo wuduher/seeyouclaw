@@ -67,6 +67,47 @@ This design preserves nanobot compatibility:
 - Telephone spoken-reply hints still apply.
 - The mode can be disabled per turn without mutating global configuration.
 
+## Acceptance Script
+
+Use the telephone page and turn on `DEEPTALK`.
+
+Explore prompt:
+
+```text
+我最近在想一个科研想法：能不能让多模态助手在低成本下判断什么时候该看摄像头，但我还没想清楚研究问题怎么定。
+```
+
+Expected response shape:
+
+- The assistant should first reflect the uncertainty or motivation.
+- It should name a compact structure such as why/current shape/open question/next step.
+- It should ask exactly one focused question instead of giving a flat answer.
+- It should keep the response short enough to be spoken.
+
+Follow-up prompt:
+
+```text
+我更关心它怎么像一个长期项目一样沉淀下来。
+```
+
+Expected response shape:
+
+- The assistant should connect the follow-up to the previous structure.
+- It should update the project frame instead of restarting.
+- It should lead toward one next decision.
+
+Archive prompt:
+
+```text
+把这次讨论归档成一个项目。
+```
+
+Expected response shape:
+
+- The assistant should switch from spoken exploration to a written project record.
+- The record should include `proposal.md`, `design.md`, `tasks.md`, and
+  `specs/<topic>/spec.md`.
+
 ## Future Work
 
 - Add a real archive endpoint that writes approved DeepTalk records under the

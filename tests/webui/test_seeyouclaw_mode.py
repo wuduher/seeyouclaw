@@ -16,8 +16,10 @@ def test_telephone_runtime_line_when_metadata_flag_set() -> None:
 def test_deeptalk_runtime_lines_when_metadata_flag_set() -> None:
     message = SimpleNamespace(metadata={"seeyouclaw_deeptalk": True})
     lines = seeyouclaw_mode.runtime_lines(message)
-    assert len(lines) >= 4
+    assert len(lines) >= 5
     assert "deeptalk mode" in lines[0].lower()
+    assert "response contract" in " ".join(lines).lower()
+    assert "exactly one focused" in " ".join(lines).lower()
     assert "proposal.md" in " ".join(lines)
     assert "archive" in " ".join(lines).lower()
 

@@ -60,4 +60,51 @@ describe("SeeyouclawTelephonePage", () => {
     await waitFor(() => expect(onCreateChat).toHaveBeenCalledTimes(1));
     expect(cameraStart).toHaveBeenCalledTimes(1);
   });
+
+  it("exposes mute, reset, and hangup controls during a call", async () => {
+    const onCreateChat = vi.fn(async () => "telephone-chat");
+    render(
+      <SeeyouclawTelephonePage
+        session={null}
+        title="Telephone"
+        onCreateChat={onCreateChat}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start call" }));
+
+    await waitFor(() => expect(cameraStart).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "End call" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Mute microphone" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Reset audio" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Mute microphone" }));
+    expect(screen.getByRole("button", { name: "Unmute microphone" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "End call" }));
+
+    expect(cameraStop).toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Start call" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Mute microphone" })).toBeDisabled();
+  });
+
+  it("rolls back the call controls when chat creation fails", async () => {
+    const onCreateChat = vi.fn(async () => null);
+    render(
+      <SeeyouclawTelephonePage
+        session={null}
+        title="Telephone"
+        onCreateChat={onCreateChat}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start call" }));
+
+    await waitFor(() => expect(onCreateChat).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "End call" })).not.toBeInTheDocument();
+    });
+    expect(cameraStart).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Start call" })).toBeEnabled();
+  });
 });

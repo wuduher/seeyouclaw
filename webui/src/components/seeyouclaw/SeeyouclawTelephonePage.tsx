@@ -795,8 +795,8 @@ export function SeeyouclawTelephonePage({
       : [12, 16, 14, 20, 16, 14, 12];
 
   return (
-    <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[#101113] text-white">
-      <div className="flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-3 sm:px-5">
+    <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground">
+      <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/60 bg-background/95 px-3 backdrop-blur sm:px-5">
         <div className="flex min-w-0 items-center gap-2">
           {onToggleSidebar ? (
             <Button
@@ -805,63 +805,63 @@ export function SeeyouclawTelephonePage({
               size="icon"
               aria-label="Toggle sidebar"
               onClick={onToggleSidebar}
-              className="h-8 w-8 rounded-full text-white/75 hover:bg-white/10 hover:text-white"
+              className="h-8 w-8 rounded-full text-muted-foreground hover:bg-muted/65 hover:text-foreground"
             >
               <PanelLeft className="h-4 w-4" />
             </Button>
           ) : null}
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold">{displayTitle}</div>
-            <div className="truncate text-xs text-white/50">{routeLabel}</div>
+            <div className="truncate text-xs text-muted-foreground">{routeLabel}</div>
           </div>
         </div>
-        <div className="flex items-center gap-2 text-xs text-white/60">
-          <Radio className={cn("h-4 w-4", pulseActive && "animate-pulse text-emerald-300")} />
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Radio className={cn("h-4 w-4", pulseActive && "animate-pulse text-emerald-500")} />
           <span className="hidden sm:inline">{statusText}</span>
         </div>
       </div>
 
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="relative min-h-0 overflow-hidden">
+        <div className="relative min-h-0 overflow-hidden bg-muted/35">
           <video
             ref={camera.videoRef}
             className={cn(
-              "h-full w-full bg-black object-cover",
-              camera.state !== "ready" && "opacity-30",
+              "h-full w-full bg-muted object-cover",
+              camera.state !== "ready" && "opacity-20 dark:opacity-35",
             )}
             muted
             playsInline
           />
-          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.20),rgba(0,0,0,0.12)_45%,rgba(0,0,0,0.55))]" />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-background/10 via-transparent to-background/75" />
           <div className="absolute left-1/2 top-1/2 flex h-52 w-52 -translate-x-1/2 -translate-y-1/2 items-center justify-center">
             <div
               className={cn(
-                "absolute h-36 w-36 rounded-full border border-emerald-300/30",
+                "absolute h-36 w-36 rounded-full border border-emerald-500/30",
                 pulseActive && "animate-ping",
                 ambientMotion && "motion-safe:animate-pulse",
               )}
             />
             <div
               className={cn(
-                "absolute h-48 w-48 rounded-full border border-cyan-200/15",
+                "absolute h-48 w-48 rounded-full border border-sky-500/15",
                 (mode === "speaking" || ambientMotion) && "motion-safe:animate-pulse",
               )}
             />
-            <div className="relative flex h-28 w-28 items-center justify-center rounded-full border border-white/15 bg-black/45 shadow-2xl backdrop-blur">
+            <div className="relative flex h-28 w-28 items-center justify-center rounded-full border border-border/70 bg-card/85 shadow-[0_18px_55px_rgba(15,23,42,0.16)] backdrop-blur dark:shadow-[0_22px_55px_rgba(0,0,0,0.34)]">
               {mode === "speaking" ? (
-                <Volume2 className="h-9 w-9 text-emerald-200" />
+                <Volume2 className="h-9 w-9 text-emerald-500" />
               ) : (
-                <Phone className="h-9 w-9 text-white/85" />
+                <Phone className="h-9 w-9 text-foreground/85" />
               )}
             </div>
           </div>
 
-          <div className="absolute bottom-24 left-1/2 flex -translate-x-1/2 items-end gap-1 rounded-full border border-white/10 bg-black/35 px-4 py-3 backdrop-blur">
+          <div className="absolute bottom-24 left-1/2 flex -translate-x-1/2 items-end gap-1 rounded-full border border-border/70 bg-card/85 px-4 py-3 shadow-[0_14px_38px_rgba(15,23,42,0.10)] backdrop-blur dark:shadow-[0_18px_38px_rgba(0,0,0,0.30)]">
             {levels.map((height, index) => (
               <span
                 key={`${height}-${index}`}
                 className={cn(
-                  "w-1.5 rounded-full bg-emerald-200/85 transition-all duration-300",
+                  "w-1.5 rounded-full bg-emerald-500/85 transition-all duration-300",
                   (pulseActive || ambientMotion) && "motion-safe:animate-pulse",
                 )}
                 style={{ height, animationDelay: `${index * 90}ms` }}
@@ -870,7 +870,7 @@ export function SeeyouclawTelephonePage({
           </div>
 
           <div className="absolute inset-x-4 bottom-4 flex flex-col gap-3 sm:inset-x-8">
-            <div className="min-h-10 rounded-md border border-white/10 bg-black/35 px-4 py-2 text-center text-sm text-white/85 backdrop-blur">
+            <div className="min-h-10 rounded-md border border-border/70 bg-card/88 px-4 py-2 text-center text-sm text-foreground/85 shadow-[0_10px_30px_rgba(15,23,42,0.08)] backdrop-blur dark:shadow-[0_14px_30px_rgba(0,0,0,0.26)]">
               {liveText}
             </div>
             <div className="flex items-center justify-center gap-3">
@@ -881,7 +881,7 @@ export function SeeyouclawTelephonePage({
                 aria-label={micMuted ? "Unmute microphone" : "Mute microphone"}
                 onClick={toggleMic}
                 disabled={!active}
-                className="h-11 w-11 rounded-full bg-white/10 text-white hover:bg-white/20"
+                className="h-11 w-11 rounded-full border border-border/70 bg-card/90 text-foreground shadow-[0_8px_22px_rgba(15,23,42,0.08)] hover:bg-muted/70"
               >
                 {micMuted ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
               </Button>
@@ -892,10 +892,10 @@ export function SeeyouclawTelephonePage({
                 aria-pressed={deepTalkEnabled}
                 onClick={toggleDeepTalk}
                 className={cn(
-                  "h-11 min-w-[112px] rounded-full px-3 text-xs font-semibold text-white hover:bg-white/20",
+                  "h-11 min-w-[112px] rounded-full px-3 text-xs font-semibold shadow-[0_8px_22px_rgba(15,23,42,0.08)]",
                   deepTalkEnabled
-                    ? "bg-sky-300 text-slate-950 hover:bg-sky-200"
-                    : "bg-white/10",
+                    ? "bg-sky-500 text-white hover:bg-sky-600 dark:bg-sky-300 dark:text-slate-950 dark:hover:bg-sky-200"
+                    : "border border-border/70 bg-card/90 text-foreground hover:bg-muted/70",
                 )}
               >
                 <Brain className="mr-2 h-4 w-4" />
@@ -927,7 +927,7 @@ export function SeeyouclawTelephonePage({
                 aria-label="Reset audio"
                 onClick={interruptAssistant}
                 disabled={!active}
-                className="h-11 w-11 rounded-full bg-white/10 text-white hover:bg-white/20"
+                className="h-11 w-11 rounded-full border border-border/70 bg-card/90 text-foreground shadow-[0_8px_22px_rgba(15,23,42,0.08)] hover:bg-muted/70"
               >
                 <RotateCcw className="h-5 w-5" />
               </Button>
@@ -935,30 +935,30 @@ export function SeeyouclawTelephonePage({
           </div>
         </div>
 
-        <aside className="min-h-0 border-t border-white/10 bg-[#181511] lg:border-l lg:border-t-0">
+        <aside className="min-h-0 border-t border-border/60 bg-background lg:border-l lg:border-t-0">
           <div className="flex h-full min-h-0 flex-col">
-            <div className="flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-4">
+            <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/60 bg-background/95 px-4">
               <div className="flex items-center gap-2 text-sm font-medium">
-                <Video className="h-4 w-4 text-amber-200" />
+                <Video className="h-4 w-4 text-amber-500" />
                 <span>{deepTalkEnabled ? "DeepTalk" : "Telephone"}</span>
               </div>
-              <span className="text-xs text-white/50">
+              <span className="text-xs text-muted-foreground">
                 {chatId ? (deepTalkEnabled ? deepTalkStatus : "Nanobot context") : "Standby"}
               </span>
             </div>
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-muted/20 px-4 py-4">
               {deepTalkEnabled ? (
-                <div className="space-y-3 rounded-md border border-sky-300/20 bg-sky-300/[0.06] p-3">
+                <div className="space-y-3 rounded-md border border-sky-500/20 bg-sky-500/[0.055] p-3 dark:border-sky-300/20 dark:bg-sky-300/[0.08]">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2 text-xs font-semibold uppercase text-sky-100/80">
+                      <div className="flex items-center gap-2 text-xs font-semibold uppercase text-sky-700/85 dark:text-sky-200/85">
                         <FolderKanban className="h-3.5 w-3.5" />
                         Project
                       </div>
-                      <div className="mt-1 truncate text-sm font-semibold text-white">
+                      <div className="mt-1 truncate text-sm font-semibold text-foreground">
                         {deepTalkProject?.title ?? displayTitle}
                       </div>
-                      <div className="mt-0.5 truncate text-[11px] text-white/45">
+                      <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
                         {deepTalkProject?.path ?? "Preparing workspace"}
                       </div>
                     </div>
@@ -969,37 +969,37 @@ export function SeeyouclawTelephonePage({
                       aria-label="Archive DeepTalk project"
                       onClick={archiveDeepTalk}
                       disabled={!deepTalkProject}
-                      className="h-8 w-8 shrink-0 rounded-full bg-white/10 text-white hover:bg-white/20"
+                      className="h-8 w-8 shrink-0 rounded-full border border-border/60 bg-background/75 text-muted-foreground hover:bg-muted hover:text-foreground"
                     >
                       <Archive className="h-4 w-4" />
                     </Button>
                   </div>
 
                   {deepTalkError ? (
-                    <div className="rounded-md border border-red-300/20 bg-red-300/10 px-2 py-1.5 text-xs text-red-50">
+                    <div className="rounded-md border border-destructive/25 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
                       {deepTalkError}
                     </div>
                   ) : null}
 
-                  <div className="space-y-2 text-xs leading-5 text-white/75">
-                    <div className="border-t border-white/10 pt-2">
-                      <div className="mb-1 text-[11px] font-semibold uppercase text-white/45">
+                  <div className="space-y-2 text-xs leading-5 text-foreground/75">
+                    <div className="border-t border-border/55 pt-2">
+                      <div className="mb-1 text-[11px] font-semibold uppercase text-muted-foreground">
                         Why
                       </div>
                       <div className="line-clamp-3 break-words">
                         {deepTalkProject?.summary.why || "Waiting for a focused opening."}
                       </div>
                     </div>
-                    <div className="border-t border-white/10 pt-2">
-                      <div className="mb-1 text-[11px] font-semibold uppercase text-white/45">
+                    <div className="border-t border-border/55 pt-2">
+                      <div className="mb-1 text-[11px] font-semibold uppercase text-muted-foreground">
                         Current
                       </div>
                       <div className="line-clamp-3 break-words">
                         {deepTalkProject?.summary.current || "No project turn synced yet."}
                       </div>
                     </div>
-                    <div className="border-t border-white/10 pt-2">
-                      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase text-white/45">
+                    <div className="border-t border-border/55 pt-2">
+                      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase text-muted-foreground">
                         <CircleHelp className="h-3 w-3" />
                         Questions
                       </div>
@@ -1013,8 +1013,8 @@ export function SeeyouclawTelephonePage({
                         ))}
                       </div>
                     </div>
-                    <div className="border-t border-white/10 pt-2">
-                      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase text-white/45">
+                    <div className="border-t border-border/55 pt-2">
+                      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase text-muted-foreground">
                         <Sparkles className="h-3 w-3" />
                         Signals
                       </div>
@@ -1028,8 +1028,8 @@ export function SeeyouclawTelephonePage({
                         ))}
                       </div>
                     </div>
-                    <div className="border-t border-white/10 pt-2">
-                      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase text-white/45">
+                    <div className="border-t border-border/55 pt-2">
+                      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase text-muted-foreground">
                         <ListChecks className="h-3 w-3" />
                         Tasks
                       </div>
@@ -1045,14 +1045,14 @@ export function SeeyouclawTelephonePage({
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between border-t border-white/10 pt-2 text-[11px] text-white/45">
+                  <div className="flex items-center justify-between border-t border-border/55 pt-2 text-[11px] text-muted-foreground">
                     <span>{deepTalkProject?.turnCount ?? 0} turns</span>
                     <span>{deepTalkProject?.archiveCount ?? 0} archives</span>
                   </div>
                 </div>
               ) : null}
               {callMessages.length === 0 ? (
-                <div className="rounded-md border border-white/10 bg-white/[0.04] px-3 py-3 text-sm text-white/55">
+                <div className="rounded-md border border-border/60 bg-background/70 px-3 py-3 text-sm text-muted-foreground">
                   {canUseSpeechRecognition ? "Ready" : "Mic unavailable"}
                 </div>
               ) : (
@@ -1062,11 +1062,11 @@ export function SeeyouclawTelephonePage({
                     className={cn(
                       "rounded-md border px-3 py-2 text-sm leading-6",
                       message.role === "user"
-                        ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-50"
-                        : "border-amber-200/20 bg-amber-200/10 text-amber-50",
+                        ? "border-emerald-500/20 bg-emerald-500/[0.075] text-emerald-800 dark:text-emerald-100"
+                        : "border-amber-500/20 bg-amber-500/[0.075] text-amber-800 dark:text-amber-100",
                     )}
                   >
-                    <div className="mb-1 text-[11px] uppercase text-white/45">
+                    <div className="mb-1 text-[11px] uppercase text-muted-foreground">
                       {message.role === "user" ? "You" : callIdentity}
                     </div>
                     <div className="line-clamp-5 whitespace-pre-wrap break-words">

@@ -120,6 +120,23 @@ afterEach(() => {
 });
 
 describe("SeeyouclawTelephonePage", () => {
+  it("uses the nanobot theme shell", async () => {
+    const onCreateChat = vi.fn(async () => "telephone-chat");
+    const { container } = render(
+      <SeeyouclawTelephonePage
+        session={null}
+        title="Telephone"
+        onCreateChat={onCreateChat}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("Ready")).toBeInTheDocument());
+    const shell = container.firstElementChild;
+    expect(shell).toHaveClass("bg-background");
+    expect(shell).toHaveClass("text-foreground");
+    expect(shell?.className).not.toContain("bg-[#101113]");
+  });
+
   it("opens a nanobot-backed call session", async () => {
     const onCreateChat = vi.fn(async () => "telephone-chat");
     render(

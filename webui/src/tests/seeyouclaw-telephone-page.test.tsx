@@ -11,7 +11,29 @@ const streamMock = vi.hoisted(() => ({
   messages: [] as Array<Record<string, unknown>>,
   send: vi.fn(),
   stop: vi.fn(),
+  transcribeAudio: vi.fn(async () => "cloud transcript"),
 }));
+
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>();
+  return {
+    ...actual,
+    fetchSettings: vi.fn(async () => ({
+      transcription: {
+        enabled: true,
+        provider: "dashscope",
+        provider_configured: true,
+        model: "qwen3-asr-flash",
+        language: "zh",
+        max_duration_sec: 120,
+        max_upload_mb: 25,
+        providers: [],
+      },
+    })),
+    fetchSeeyouclawTelephoneSpeech: vi.fn(async () => ({ ok: false })),
+    fetchSeeyouclawVisionRoute: vi.fn(async () => ({ ok: false })),
+  };
+});
 
 vi.mock("@/providers/ClientProvider", () => ({
   useClient: () => ({ token: "test-token" }),
@@ -32,6 +54,7 @@ vi.mock("@/hooks/useNanobotStream", () => ({
     stop: streamMock.stop,
     streamError: null,
     dismissStreamError: streamMock.dismissStreamError,
+    transcribeAudio: streamMock.transcribeAudio,
   }),
 }));
 

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import io
 import json
 import re
 from typing import Any
+import wave
 
 import httpx
 from loguru import logger
@@ -16,6 +20,9 @@ DEFAULT_TELEPHONE_MODEL = "qwen3-omni-flash"
 DEFAULT_TELEPHONE_VOICE = "Ethan"
 DEFAULT_TELEPHONE_FORMAT = "wav"
 MAX_TELEPHONE_SPEECH_CHARS = 1200
+TELEPHONE_AUDIO_CHANNELS = 1
+TELEPHONE_AUDIO_SAMPLE_RATE = 24_000
+TELEPHONE_AUDIO_SAMPLE_WIDTH_BYTES = 2
 
 
 def _clean_text(value: Any, *, max_len: int = MAX_TELEPHONE_SPEECH_CHARS) -> str:
@@ -87,6 +94,37 @@ def _extract_audio_chunk(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _decode_audio_base64(value: str) -> bytes:
+    cleaned = re.sub(r"\s+", "", value)
+    if cleaned.startswith("data:") and "," in cleaned:
+        cleaned = cleaned.split(",", 1)[1]
+    cleaned += "=" * (-len(cleaned) % 4)
+    return base64.b64decode(cleaned, validate=False)
+
+
+def _wrap_pcm_as_wav(pcm_bytes: bytes) -> bytes:
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setnchannels(TELEPHONE_AUDIO_CHANNELS)
+        wav.setsampwidth(TELEPHONE_AUDIO_SAMPLE_WIDTH_BYTES)
+        wav.setframerate(TELEPHONE_AUDIO_SAMPLE_RATE)
+        wav.writeframes(pcm_bytes)
+    return output.getvalue()
+
+
+def _audio_response_payload(audio_base64: str, *, audio_format: str) -> tuple[str, str]:
+    audio_bytes = _decode_audio_base64(audio_base64)
+    if audio_format == "wav":
+        audio_bytes = _wrap_pcm_as_wav(audio_bytes)
+        mime_type = "audio/wav"
+    elif audio_format == "mp3":
+        mime_type = "audio/mpeg"
+    else:
+        mime_type = "audio/pcm"
+    encoded = base64.b64encode(audio_bytes).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}", mime_type
+
+
 def _telephone_request_body(text: str, *, model: str, voice: str, audio_format: str) -> dict[str, Any]:
     return {
         "model": model,
@@ -104,6 +142,7 @@ def _telephone_request_body(text: str, *, model: str, voice: str, audio_format: 
         "audio": {"voice": voice, "format": audio_format},
         "stream": True,
         "stream_options": {"include_usage": True},
+        "enable_thinking": False,
     }
 
 
@@ -183,10 +222,18 @@ async def synthesize_telephone_speech(payload: dict[str, Any]) -> dict[str, Any]
     if not audio_chunks:
         return _fallback_response("speech provider returned no audio")
 
-    mime_type = f"audio/{audio_format}"
+    try:
+        audio_data_url, mime_type = _audio_response_payload(
+            "".join(audio_chunks),
+            audio_format=audio_format,
+        )
+    except (binascii.Error, ValueError) as exc:
+        logger.warning("seeyouclaw telephone speech returned invalid audio: {}", exc)
+        return _fallback_response("speech provider returned invalid audio")
+
     return {
         "ok": True,
-        "audioDataUrl": f"data:{mime_type};base64,{''.join(audio_chunks)}",
+        "audioDataUrl": audio_data_url,
         "mimeType": mime_type,
         "reason": "ok",
         "model": model,

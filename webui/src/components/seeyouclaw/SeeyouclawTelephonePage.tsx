@@ -95,7 +95,7 @@ function compactDeepTalkText(text: string): string {
 
 function isLikelyIncompleteUtterance(text: string): boolean {
   const compact = normalizeSpokenText(text)
-    .replace(/[，。！？、,.!?;；:：]+$/g, "")
+    .replace(/[\u3001\u3002\uff0c\uff01\uff1f,.!?;\uff1b:\uff1a]+$/g, "")
     .replace(/\s+/g, "")
     .toLowerCase();
   if (!compact) return false;
@@ -168,8 +168,7 @@ function visibleCallMessages(messages: UIMessage[]): UIMessage[] {
     )
     .filter((message) =>
       message.role !== "assistant" || !isTelephoneControlMessage(message.content),
-    )
-    .slice(-8);
+    );
 }
 
 function contextKind(kind: string | null | undefined): VisionRouteContextKind {
@@ -713,15 +712,15 @@ export function SeeyouclawTelephonePage({
         format: "wav",
       }).catch(() => null);
       if (cloud?.ok && cloud.audioDataUrl) {
-        setSpeechLabel("Speaking");
+        setSpeechLabel("Qwen voice");
         await playAudio(cloud.audioDataUrl);
       } else {
-        setSpeechLabel("Browser voice");
+        setSpeechLabel("Browser voice fallback");
         await speakWithBrowser(spokenText);
       }
     } catch {
       try {
-        setSpeechLabel("Browser voice");
+        setSpeechLabel("Browser voice fallback");
         await speakWithBrowser(spokenText);
       } catch {
         setSpeechLabel("Text only");
@@ -1037,10 +1036,10 @@ export function SeeyouclawTelephonePage({
                         <FolderKanban className="h-3.5 w-3.5" />
                         Project
                       </div>
-                      <div className="mt-1 truncate text-sm font-semibold text-foreground">
+                      <div className="mt-1 break-words text-sm font-semibold text-foreground">
                         {deepTalkProject?.title ?? displayTitle}
                       </div>
-                      <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                      <div className="mt-0.5 break-all text-[11px] text-muted-foreground">
                         {deepTalkProject?.path ?? "Preparing workspace"}
                       </div>
                     </div>
@@ -1068,7 +1067,7 @@ export function SeeyouclawTelephonePage({
                       <div className="mb-1 text-[11px] font-semibold uppercase text-muted-foreground">
                         Why
                       </div>
-                      <div className="line-clamp-3 break-words">
+                      <div className="break-words">
                         {deepTalkProject?.summary.why || "Waiting for a focused opening."}
                       </div>
                     </div>
@@ -1076,7 +1075,7 @@ export function SeeyouclawTelephonePage({
                       <div className="mb-1 text-[11px] font-semibold uppercase text-muted-foreground">
                         Current
                       </div>
-                      <div className="line-clamp-3 break-words">
+                      <div className="break-words">
                         {deepTalkProject?.summary.current || "No project turn synced yet."}
                       </div>
                     </div>
@@ -1086,10 +1085,10 @@ export function SeeyouclawTelephonePage({
                         Questions
                       </div>
                       <div className="space-y-1">
-                        {(deepTalkProject?.summary.open_questions?.slice(0, 3) ?? [
+                        {(deepTalkProject?.summary.open_questions ?? [
                           "What concrete outcome should this DeepTalk produce?",
                         ]).map((item) => (
-                          <div key={item} className="line-clamp-2 break-words">
+                          <div key={item} className="break-words">
                             {item}
                           </div>
                         ))}
@@ -1101,10 +1100,10 @@ export function SeeyouclawTelephonePage({
                         Moves
                       </div>
                       <div className="space-y-1">
-                        {(deepTalkProject?.summary.guidance_moves?.slice(0, 3) ?? [
+                        {(deepTalkProject?.summary.guidance_moves ?? [
                           "Mirror, frame, offer lanes, and close with one question.",
                         ]).map((item) => (
-                          <div key={item} className="line-clamp-2 break-words">
+                          <div key={item} className="break-words">
                             {item}
                           </div>
                         ))}
@@ -1116,10 +1115,10 @@ export function SeeyouclawTelephonePage({
                         Signals
                       </div>
                       <div className="space-y-1">
-                        {(deepTalkProject?.summary.proactive_signals?.slice(0, 3) ?? [
+                        {(deepTalkProject?.summary.proactive_signals ?? [
                           "SDD questions, empathy, observation windows, and hooks.",
                         ]).map((item) => (
-                          <div key={item} className="line-clamp-2 break-words">
+                          <div key={item} className="break-words">
                             {item}
                           </div>
                         ))}
@@ -1131,10 +1130,10 @@ export function SeeyouclawTelephonePage({
                         Tasks
                       </div>
                       <div className="space-y-1">
-                        {(deepTalkProject?.summary.tasks?.slice(0, 3) ?? [
+                        {(deepTalkProject?.summary.tasks ?? [
                           "Clarify the main question.",
                         ]).map((item) => (
-                          <div key={item} className="line-clamp-2 break-words">
+                          <div key={item} className="break-words">
                             {item}
                           </div>
                         ))}
@@ -1166,7 +1165,7 @@ export function SeeyouclawTelephonePage({
                     <div className="mb-1 text-[11px] uppercase text-muted-foreground">
                       {message.role === "user" ? "You" : callIdentity}
                     </div>
-                    <div className="line-clamp-5 whitespace-pre-wrap break-words">
+                    <div className="whitespace-pre-wrap break-words">
                       {message.content}
                     </div>
                   </div>

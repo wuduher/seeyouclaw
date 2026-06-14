@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import json
 from types import SimpleNamespace
+import wave
 
 import pytest
 
@@ -39,6 +42,25 @@ def test_telephone_request_body_uses_streaming_audio_modalities() -> None:
     assert body["audio"] == {"voice": "Ethan", "format": "wav"}
     assert body["stream"] is True
     assert body["stream_options"] == {"include_usage": True}
+    assert body["enable_thinking"] is False
+
+
+def test_audio_response_payload_wraps_pcm_as_wav() -> None:
+    pcm = b"\x00\x00\x01\x00\xff\xff"
+    data_url, mime_type = telephone._audio_response_payload(
+        base64.b64encode(pcm).decode("ascii"),
+        audio_format="wav",
+    )
+
+    assert mime_type == "audio/wav"
+    assert data_url.startswith("data:audio/wav;base64,")
+    wav_bytes = base64.b64decode(data_url.split(",", 1)[1])
+    assert wav_bytes.startswith(b"RIFF")
+    with wave.open(io.BytesIO(wav_bytes), "rb") as wav:
+        assert wav.getnchannels() == 1
+        assert wav.getframerate() == 24_000
+        assert wav.getsampwidth() == 2
+        assert wav.readframes(wav.getnframes()) == pcm
 
 
 def test_synthesize_telephone_speech_falls_back_without_key(monkeypatch: pytest.MonkeyPatch) -> None:

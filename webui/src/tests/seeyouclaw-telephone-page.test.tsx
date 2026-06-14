@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SeeyouclawTelephonePage } from "@/components/seeyouclaw/SeeyouclawTelephonePage";
+import { ApiError, fetchSeeyouclawTelephoneSpeech } from "@/lib/api";
 
 const cameraStart = vi.fn(async () => undefined);
 const cameraStop = vi.fn();
@@ -12,6 +13,9 @@ const streamMock = vi.hoisted(() => ({
   send: vi.fn(),
   stop: vi.fn(),
   transcribeAudio: vi.fn(async () => "cloud transcript"),
+}));
+const speechApiMock = vi.hoisted(() => ({
+  fetch: vi.fn(async () => ({ ok: false })),
 }));
 const deepTalkApiMock = vi.hoisted(() => {
   const project = (overrides: Record<string, unknown> = {}) => ({
@@ -72,7 +76,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
         providers: [],
       },
     })),
-    fetchSeeyouclawTelephoneSpeech: vi.fn(async () => ({ ok: false })),
+    fetchSeeyouclawTelephoneSpeech: speechApiMock.fetch,
     fetchSeeyouclawVisionRoute: vi.fn(async () => ({ ok: false })),
     archiveSeeyouclawDeepTalkProject: deepTalkApiMock.archive,
     ensureSeeyouclawDeepTalkProject: deepTalkApiMock.ensure,
@@ -118,6 +122,7 @@ afterEach(() => {
   vi.clearAllMocks();
   streamMock.isStreaming = false;
   streamMock.messages = [];
+  speechApiMock.fetch.mockResolvedValue({ ok: false });
 });
 
 describe("SeeyouclawTelephonePage", () => {
@@ -227,6 +232,83 @@ describe("SeeyouclawTelephonePage", () => {
     expect(screen.getByText("Research exploration")).toBeInTheDocument();
     expect(screen.getByText("Mirror, frame, and offer lanes")).toBeInTheDocument();
     expect(screen.getByText("SDD questions and observation windows")).toBeInTheDocument();
+  });
+
+  it("explains when the running gateway is too old for DeepTalk project sync", async () => {
+    deepTalkApiMock.ensure.mockRejectedValueOnce(new ApiError(404, "API route not found"));
+    const onCreateChat = vi.fn(async () => "telephone-chat");
+    render(
+      <SeeyouclawTelephonePage
+        session={null}
+        title="Telephone"
+        onCreateChat={onCreateChat}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start call" }));
+    await waitFor(() => expect(cameraStart).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Toggle DeepTalk mode" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Restart gateway to enable DeepTalk project sync")).toBeInTheDocument();
+    });
+  });
+
+  it("waits for qwen telephone audio before falling back to browser speech", async () => {
+    const playMock = vi.fn(async () => undefined);
+    const pauseMock = vi.fn();
+    class MockAudio {
+      onended: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor(readonly src: string) {}
+      pause = pauseMock;
+      play = vi.fn(async () => {
+        playMock(this.src);
+        queueMicrotask(() => this.onended?.());
+      });
+    }
+    const speakMock = vi.fn();
+    vi.stubGlobal("Audio", MockAudio);
+    vi.stubGlobal("speechSynthesis", {
+      cancel: vi.fn(),
+      speak: speakMock,
+    });
+    vi.mocked(fetchSeeyouclawTelephoneSpeech).mockResolvedValueOnce({
+      audioDataUrl: "data:audio/wav;base64,UklGRg==",
+      mimeType: "audio/wav",
+      ok: true,
+      reason: "ok",
+    });
+    const onCreateChat = vi.fn(async () => "telephone-chat");
+    const { rerender } = render(
+      <SeeyouclawTelephonePage
+        session={null}
+        title="Telephone"
+        onCreateChat={onCreateChat}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start call" }));
+    await waitFor(() => expect(cameraStart).toHaveBeenCalledTimes(1));
+    streamMock.messages = [
+      {
+        content: "我听见这里有一种复杂感受。",
+        id: "assistant-audio",
+        role: "assistant",
+      },
+    ];
+    rerender(
+      <SeeyouclawTelephonePage
+        session={null}
+        title="Telephone"
+        onCreateChat={onCreateChat}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(playMock).toHaveBeenCalledWith("data:audio/wav;base64,UklGRg==");
+    });
+    expect(speakMock).not.toHaveBeenCalled();
   });
 
   it("rolls back the call controls when chat creation fails", async () => {

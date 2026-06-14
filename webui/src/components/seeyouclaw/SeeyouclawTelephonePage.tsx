@@ -37,6 +37,7 @@ import {
   fetchSeeyouclawVisionRoute,
   fetchSettings,
   updateSeeyouclawDeepTalkProject,
+  ApiError,
   type SeeyouclawDeepTalkProject,
 } from "@/lib/api";
 import { supportsBrowserSpeechRecognition } from "@/lib/browserSpeechRecognition";
@@ -75,7 +76,6 @@ interface SeeyouclawTelephonePageProps {
 }
 
 const CAPTURE_COOLDOWN_MS = 2_500;
-const TELEPHONE_AUDIO_GRACE_MS = 800;
 const TELEPHONE_INTERIM_STABLE_MS = 750;
 const TELEPHONE_VOICE = "Ethan";
 const TELEPHONE_AUDIO_MODEL = "qwen3-omni-flash";
@@ -542,8 +542,12 @@ export function SeeyouclawTelephonePage({
       setDeepTalkProject(response.project);
       setDeepTalkStatus("Project live");
       return response.project;
-    } catch {
-      setDeepTalkError("Project sync failed");
+    } catch (error) {
+      setDeepTalkError(
+        error instanceof ApiError && error.status === 404
+          ? "Restart gateway to enable DeepTalk project sync"
+          : "Project sync failed",
+      );
       setDeepTalkStatus("Project offline");
       return null;
     }
@@ -618,29 +622,26 @@ export function SeeyouclawTelephonePage({
     if (!spokenText) return;
     speakingRef.current = true;
     setMode("speaking");
-    setSpeechLabel("Speaking");
+    setSpeechLabel("Preparing voice");
     stopListening(true);
     startListeningRef.current({ bargeIn: true });
     try {
-      const cloudPromise = fetchSeeyouclawTelephoneSpeech(token, {
+      const cloud = await fetchSeeyouclawTelephoneSpeech(token, {
         text: spokenText,
         model: TELEPHONE_AUDIO_MODEL,
         voice: TELEPHONE_VOICE,
         format: "wav",
       }).catch(() => null);
-      const cloud = await Promise.race([
-        cloudPromise,
-        new Promise<null>((resolve) => {
-          window.setTimeout(() => resolve(null), TELEPHONE_AUDIO_GRACE_MS);
-        }),
-      ]);
       if (cloud?.ok && cloud.audioDataUrl) {
+        setSpeechLabel("Speaking");
         await playAudio(cloud.audioDataUrl);
       } else {
+        setSpeechLabel("Browser voice");
         await speakWithBrowser(spokenText);
       }
     } catch {
       try {
+        setSpeechLabel("Browser voice");
         await speakWithBrowser(spokenText);
       } catch {
         setSpeechLabel("Text only");

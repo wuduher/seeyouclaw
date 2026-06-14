@@ -76,7 +76,9 @@ interface SeeyouclawTelephonePageProps {
 }
 
 const CAPTURE_COOLDOWN_MS = 2_500;
-const TELEPHONE_INTERIM_STABLE_MS = 750;
+const TELEPHONE_INTERIM_STABLE_MS = 1_800;
+const TELEPHONE_FINAL_STABLE_MS = 1_100;
+const TELEPHONE_INCOMPLETE_UTTERANCE_MS = 2_800;
 const TELEPHONE_VOICE = "Ethan";
 const TELEPHONE_AUDIO_MODEL = "qwen3-omni-flash";
 const DEEPTALK_SYNC_TEXT_LIMIT = 900;
@@ -89,6 +91,50 @@ function compactDeepTalkText(text: string): string {
   const normalized = normalizeSpokenText(text);
   if (normalized.length <= DEEPTALK_SYNC_TEXT_LIMIT) return normalized;
   return `${normalized.slice(0, DEEPTALK_SYNC_TEXT_LIMIT - 1).trim()}...`;
+}
+
+function isLikelyIncompleteUtterance(text: string): boolean {
+  const compact = normalizeSpokenText(text)
+    .replace(/[，。！？、,.!?;；:：]+$/g, "")
+    .replace(/\s+/g, "")
+    .toLowerCase();
+  if (!compact) return false;
+  const exactIncompleteFragments = [
+    "\u6211\u662f\u8bf4",
+    "\u6211\u60f3\u8bf4",
+    "\u6211\u662f\u60f3\u8bf4",
+    "\u6211\u7684\u610f\u601d\u662f",
+    "\u4e0d\u662f",
+    "\u4e0d\u662f\u8bf4",
+    "\u7b49\u4e00\u4e0b",
+    "\u7b49\u7b49",
+    "\u7b49\u4f1a",
+    "\u55ef",
+    "\u5443",
+  ];
+  const prefixIncompleteFragments = [
+    "imean",
+    "whatimean",
+    "wait",
+    "holdon",
+  ];
+  return compact.length <= 8
+    && (
+      exactIncompleteFragments.some((fragment) => compact === fragment)
+      || prefixIncompleteFragments.some((fragment) => compact === fragment || compact.startsWith(fragment))
+    );
+}
+
+function mergeUtteranceParts(previous: string, next: string): string {
+  const left = normalizeSpokenText(previous);
+  const right = normalizeSpokenText(next);
+  if (!left) return right;
+  if (!right) return left;
+  if (left === right) return left;
+  if (right.includes(left)) return right;
+  if (left.includes(right)) return left;
+  if (isLikelyIncompleteUtterance(left) && !isLikelyIncompleteUtterance(right)) return right;
+  return `${left} ${right}`;
 }
 
 function latestAssistantMessage(messages: UIMessage[]): UIMessage | null {
@@ -191,6 +237,8 @@ export function SeeyouclawTelephonePage({
   const cooldownUntilRef = useRef(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const interimCommitTimerRef = useRef<number | null>(null);
+  const finalCommitTimerRef = useRef<number | null>(null);
+  const pendingUtteranceRef = useRef("");
   const lastCommittedUtteranceRef = useRef("");
   const playAudioFinishRef = useRef<(() => void) | null>(null);
   const deepTalkProjectRef = useRef<SeeyouclawDeepTalkProject | null>(null);
@@ -273,6 +321,11 @@ export function SeeyouclawTelephonePage({
       window.clearTimeout(interimCommitTimerRef.current);
       interimCommitTimerRef.current = null;
     }
+    if (finalCommitTimerRef.current) {
+      window.clearTimeout(finalCommitTimerRef.current);
+      finalCommitTimerRef.current = null;
+    }
+    pendingUtteranceRef.current = "";
     const recognition = recognitionRef.current;
     recognitionRef.current = null;
     if (!recognition) return;
@@ -313,6 +366,29 @@ export function SeeyouclawTelephonePage({
       isFinalizingUtteranceRef.current = false;
     }
   }, [finalizeSegment, hybridEnabled, stopListening]);
+
+  const scheduleUtteranceCommit = useCallback((text: string) => {
+    const next = normalizeSpokenText(text);
+    if (!next) return;
+    pendingUtteranceRef.current = mergeUtteranceParts(pendingUtteranceRef.current, next);
+    const pending = pendingUtteranceRef.current;
+    if (finalCommitTimerRef.current) {
+      window.clearTimeout(finalCommitTimerRef.current);
+      finalCommitTimerRef.current = null;
+    }
+    const incomplete = isLikelyIncompleteUtterance(pending);
+    finalCommitTimerRef.current = window.setTimeout(() => {
+      finalCommitTimerRef.current = null;
+      const committed = pendingUtteranceRef.current;
+      pendingUtteranceRef.current = "";
+      if (isLikelyIncompleteUtterance(committed)) {
+        setInterimTranscript("");
+        setSpeechLabel("Listening");
+        return;
+      }
+      void dispatchUtterance(committed);
+    }, incomplete ? TELEPHONE_INCOMPLETE_UTTERANCE_MS : TELEPHONE_FINAL_STABLE_MS);
+  }, [dispatchUtterance]);
 
   const stopSpeech = useCallback(() => {
     speakingRef.current = false;
@@ -410,13 +486,17 @@ export function SeeyouclawTelephonePage({
         interimCommitTimerRef.current = null;
       }
       if (normalized) {
-        void dispatchUtterance(normalized);
+        scheduleUtteranceCommit(normalized);
         return;
       }
       if (interimText) {
+        if (finalCommitTimerRef.current) {
+          window.clearTimeout(finalCommitTimerRef.current);
+          finalCommitTimerRef.current = null;
+        }
         interimCommitTimerRef.current = window.setTimeout(() => {
           interimCommitTimerRef.current = null;
-          void dispatchUtterance(interimText);
+          scheduleUtteranceCommit(interimText);
         }, TELEPHONE_INTERIM_STABLE_MS);
       }
     };
@@ -445,7 +525,7 @@ export function SeeyouclawTelephonePage({
     } catch {
       recognitionRef.current = null;
     }
-  }, [dispatchUtterance, hybridEnabled, interruptAssistant, startSegment, stopListening]);
+  }, [hybridEnabled, interruptAssistant, scheduleUtteranceCommit, startSegment, stopListening]);
 
   useEffect(() => {
     startListeningRef.current = startListening;

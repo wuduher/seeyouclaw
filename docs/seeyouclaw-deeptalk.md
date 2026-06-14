@@ -135,6 +135,11 @@ For speech, this should sound like a light hosting loop, not a written outline:
 "I hear the uncertainty. I can hold this as either an emotional reflection, a
 research direction, or a blog argument; which lane should we take first?"
 
+DeepTalk should not collapse back into ordinary telephone acknowledgements.
+For every substantive turn, a warm reflection alone is not enough: the assistant
+should name the emotional variable, offer lanes, update the project frame, or
+propose the next archiveable artifact before asking its one focused question.
+
 ## Runtime Integration
 
 DeepTalk enters through an explicit `DEEPTALK` toggle on the telephone page.
@@ -192,6 +197,8 @@ Expected result:
 - It names a compact project frame, such as why/current shape/open question/next step.
 - It uses an audible guidance move: mirror, frame, offer lanes, research gate,
   archive checkpoint, or one-question close.
+- It does not answer substantive turns with only "I am listening" style passive
+  acknowledgement.
 - It asks exactly one focused question.
 - The right sidebar shows Why, Current, Questions, Moves, Signals, and Tasks.
 - If external papers, citations, benchmarks, or codebase evidence become

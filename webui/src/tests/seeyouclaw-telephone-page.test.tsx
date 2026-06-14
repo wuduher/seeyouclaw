@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SeeyouclawTelephonePage } from "@/components/seeyouclaw/SeeyouclawTelephonePage";
@@ -119,11 +119,63 @@ vi.mock("@/hooks/seeyouclaw/useCameraSnapshot", () => ({
 }));
 
 afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
   streamMock.isStreaming = false;
   streamMock.messages = [];
   speechApiMock.fetch.mockResolvedValue({ ok: false });
 });
+
+type MockSpeechRecognitionEvent = {
+  resultIndex: number;
+  results: {
+    length: number;
+    [index: number]: {
+      isFinal: boolean;
+      length: number;
+      [index: number]: { transcript: string };
+    };
+  };
+};
+
+function stubSpeechRecognition() {
+  const recognizers: Array<{
+    emit: (transcript: string, isFinal: boolean) => void;
+    onend: ((event: Event) => void) | null;
+    onerror: ((event: { error?: string }) => void) | null;
+    onresult: ((event: MockSpeechRecognitionEvent) => void) | null;
+  }> = [];
+  class MockRecognition {
+    continuous = false;
+    interimResults = false;
+    lang = "";
+    onend: ((event: Event) => void) | null = null;
+    onerror: ((event: { error?: string }) => void) | null = null;
+    onresult: ((event: MockSpeechRecognitionEvent) => void) | null = null;
+    constructor() {
+      recognizers.push(this);
+    }
+    start = vi.fn();
+    stop = vi.fn();
+    abort = vi.fn();
+    emit(transcript: string, isFinal: boolean) {
+      this.onresult?.({
+        resultIndex: 0,
+        results: {
+          0: {
+            0: { transcript },
+            isFinal,
+            length: 1,
+          },
+          length: 1,
+        },
+      });
+    }
+  }
+  vi.stubGlobal("SpeechRecognition", MockRecognition);
+  return recognizers;
+}
 
 describe("SeeyouclawTelephonePage", () => {
   it("uses the nanobot theme shell", async () => {
@@ -309,6 +361,79 @@ describe("SeeyouclawTelephonePage", () => {
       expect(playMock).toHaveBeenCalledWith("data:audio/wav;base64,UklGRg==");
     });
     expect(speakMock).not.toHaveBeenCalled();
+  });
+
+  it("buffers incomplete speech recognition fragments before sending", async () => {
+    const recognizers = stubSpeechRecognition();
+    const onCreateChat = vi.fn(async () => "telephone-chat");
+    render(
+      <SeeyouclawTelephonePage
+        session={null}
+        title="Telephone"
+        onCreateChat={onCreateChat}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start call" }));
+    await waitFor(() => expect(cameraStart).toHaveBeenCalledTimes(1));
+    expect(recognizers.length).toBeGreaterThan(0);
+    vi.useFakeTimers();
+
+    act(() => {
+      recognizers[0].emit("\u6211\u662f\u8bf4", true);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(3_000);
+      await Promise.resolve();
+    });
+    expect(streamMock.send).not.toHaveBeenCalled();
+
+    act(() => {
+      recognizers[0].emit("\u53ef\u662f\u6211\u8fd8\u662f\u4f1a\u60f3\u4ed6", true);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(1_200);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(streamMock.send).toHaveBeenCalledWith(
+      "\u53ef\u662f\u6211\u8fd8\u662f\u4f1a\u60f3\u4ed6",
+      undefined,
+      { seeyouclawTelephone: true },
+    );
+  });
+
+  it("sends short substantive speech recognition turns", async () => {
+    const recognizers = stubSpeechRecognition();
+    const onCreateChat = vi.fn(async () => "telephone-chat");
+    render(
+      <SeeyouclawTelephonePage
+        session={null}
+        title="Telephone"
+        onCreateChat={onCreateChat}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start call" }));
+    await waitFor(() => expect(cameraStart).toHaveBeenCalledTimes(1));
+    expect(recognizers.length).toBeGreaterThan(0);
+    vi.useFakeTimers();
+
+    act(() => {
+      recognizers[0].emit("\u4e0d\u662f\u6ca1\u8d70\u51fa\u6765", true);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(1_200);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(streamMock.send).toHaveBeenCalledWith(
+      "\u4e0d\u662f\u6ca1\u8d70\u51fa\u6765",
+      undefined,
+      { seeyouclawTelephone: true },
+    );
   });
 
   it("rolls back the call controls when chat creation fails", async () => {

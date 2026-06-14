@@ -529,6 +529,34 @@ describe("NanobotClient", () => {
     );
   });
 
+  it("includes seeyouclaw DeepTalk mode metadata in outbound messages", () => {
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    lastSocket().fakeOpen();
+
+    client.sendMessage(
+      "chat-deeptalk",
+      "let us explore this idea",
+      undefined,
+      { seeyouclawTelephone: true, seeyouclawDeepTalk: true },
+    );
+
+    expect(lastSocket().sent).toContain(
+      JSON.stringify({
+        type: "message",
+        chat_id: "chat-deeptalk",
+        content: "let us explore this idea",
+        seeyouclaw_telephone: true,
+        seeyouclaw_deeptalk: true,
+        webui: true,
+      }),
+    );
+  });
+
   it("includes CLI app attachments in outbound messages", () => {
     const client = new NanobotClient({
       url: "ws://test",

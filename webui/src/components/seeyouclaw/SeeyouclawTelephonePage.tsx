@@ -6,6 +6,12 @@ import {
   useState,
 } from "react";
 import {
+  Archive,
+  Brain,
+  CircleHelp,
+  FolderKanban,
+  ListChecks,
+  MessagesSquare,
   Mic,
   MicOff,
   PanelLeft,
@@ -13,6 +19,7 @@ import {
   PhoneOff,
   Radio,
   RotateCcw,
+  Sparkles,
   Video,
   Volume2,
 } from "lucide-react";
@@ -24,9 +31,14 @@ import { useHybridAsrRecorder } from "@/hooks/seeyouclaw/useHybridAsrRecorder";
 import { useNanobotStream, type SendImage } from "@/hooks/useNanobotStream";
 import { useSessionHistory } from "@/hooks/useSessions";
 import {
+  archiveSeeyouclawDeepTalkProject,
+  ensureSeeyouclawDeepTalkProject,
   fetchSeeyouclawTelephoneSpeech,
   fetchSeeyouclawVisionRoute,
   fetchSettings,
+  updateSeeyouclawDeepTalkProject,
+  ApiError,
+  type SeeyouclawDeepTalkProject,
 } from "@/lib/api";
 import { supportsBrowserSpeechRecognition } from "@/lib/browserSpeechRecognition";
 import {
@@ -64,13 +76,80 @@ interface SeeyouclawTelephonePageProps {
 }
 
 const CAPTURE_COOLDOWN_MS = 2_500;
-const TELEPHONE_AUDIO_GRACE_MS = 800;
-const TELEPHONE_INTERIM_STABLE_MS = 750;
+const TELEPHONE_INTERIM_STABLE_MS = 1_800;
+const TELEPHONE_FINAL_STABLE_MS = 1_100;
+const TELEPHONE_INCOMPLETE_UTTERANCE_MS = 2_800;
 const TELEPHONE_VOICE = "Ethan";
 const TELEPHONE_AUDIO_MODEL = "qwen3-omni-flash";
+const DEEPTALK_SYNC_TEXT_LIMIT = 900;
+const DEEPTALK_PAUSE_HOOK_MS = 28_000;
+const DEEPTALK_OBSERVATION_FRAME_GAP_MS = 380;
 
 function normalizeSpokenText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
+}
+
+function formatDeepTalkObservationText(
+  frameCount: number,
+  decision: {
+    level: string;
+    trigger: string;
+    nextContext?: VisionRouteContext | null;
+  },
+): string {
+  const kind = decision.nextContext?.kind ?? "scene";
+  return normalizeSpokenText(
+    `Visual observation window: ${frameCount} frame(s), route=${decision.level}, context=${kind}, trigger=${decision.trigger}.`,
+  );
+}
+function compactDeepTalkText(text: string): string {
+  const normalized = normalizeSpokenText(text);
+  if (normalized.length <= DEEPTALK_SYNC_TEXT_LIMIT) return normalized;
+  return `${normalized.slice(0, DEEPTALK_SYNC_TEXT_LIMIT - 1).trim()}...`;
+}
+
+function isLikelyIncompleteUtterance(text: string): boolean {
+  const compact = normalizeSpokenText(text)
+    .replace(/[\u3001\u3002\uff0c\uff01\uff1f,.!?;\uff1b:\uff1a]+$/g, "")
+    .replace(/\s+/g, "")
+    .toLowerCase();
+  if (!compact) return false;
+  const exactIncompleteFragments = [
+    "\u6211\u662f\u8bf4",
+    "\u6211\u60f3\u8bf4",
+    "\u6211\u662f\u60f3\u8bf4",
+    "\u6211\u7684\u610f\u601d\u662f",
+    "\u4e0d\u662f",
+    "\u4e0d\u662f\u8bf4",
+    "\u7b49\u4e00\u4e0b",
+    "\u7b49\u7b49",
+    "\u7b49\u4f1a",
+    "\u55ef",
+    "\u5443",
+  ];
+  const prefixIncompleteFragments = [
+    "imean",
+    "whatimean",
+    "wait",
+    "holdon",
+  ];
+  return compact.length <= 8
+    && (
+      exactIncompleteFragments.some((fragment) => compact === fragment)
+      || prefixIncompleteFragments.some((fragment) => compact === fragment || compact.startsWith(fragment))
+    );
+}
+
+function mergeUtteranceParts(previous: string, next: string): string {
+  const left = normalizeSpokenText(previous);
+  const right = normalizeSpokenText(next);
+  if (!left) return right;
+  if (!right) return left;
+  if (left === right) return left;
+  if (right.includes(left)) return right;
+  if (left.includes(right)) return left;
+  if (isLikelyIncompleteUtterance(left) && !isLikelyIncompleteUtterance(right)) return right;
+  return `${left} ${right}`;
 }
 
 function latestAssistantMessage(messages: UIMessage[]): UIMessage | null {
@@ -104,8 +183,7 @@ function visibleCallMessages(messages: UIMessage[]): UIMessage[] {
     )
     .filter((message) =>
       message.role !== "assistant" || !isTelephoneControlMessage(message.content),
-    )
-    .slice(-8);
+    );
 }
 
 function contextKind(kind: string | null | undefined): VisionRouteContextKind {
@@ -152,6 +230,10 @@ export function SeeyouclawTelephonePage({
   const [cloudTranscriptionReady, setCloudTranscriptionReady] = useState(false);
   const [active, setActive] = useState(false);
   const [mode, setMode] = useState<TelephoneMode>("idle");
+  const [deepTalkEnabled, setDeepTalkEnabled] = useState(false);
+  const [deepTalkProject, setDeepTalkProject] = useState<SeeyouclawDeepTalkProject | null>(null);
+  const [deepTalkStatus, setDeepTalkStatus] = useState("Project standby");
+  const [deepTalkError, setDeepTalkError] = useState<string | null>(null);
   const [micMuted, setMicMuted] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");
   const [lastUserText, setLastUserText] = useState("");
@@ -169,8 +251,16 @@ export function SeeyouclawTelephonePage({
   const cooldownUntilRef = useRef(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const interimCommitTimerRef = useRef<number | null>(null);
+  const finalCommitTimerRef = useRef<number | null>(null);
+  const pendingUtteranceRef = useRef("");
   const lastCommittedUtteranceRef = useRef("");
   const playAudioFinishRef = useRef<(() => void) | null>(null);
+  const deepTalkProjectRef = useRef<SeeyouclawDeepTalkProject | null>(null);
+  const deepTalkEnabledRef = useRef(false);
+  const pendingObservationTextRef = useRef<string | null>(null);
+  const lastVoiceActivityRef = useRef(Date.now());
+  const pauseHookSentRef = useRef(false);
+  const latestProjectAssistantIdRef = useRef<string | null>(null);
   const stopAgentRef = useRef<() => void>(() => undefined);
   const startListeningRef = useRef<(options?: { bargeIn?: boolean }) => void>(() => undefined);
   const isFinalizingUtteranceRef = useRef(false);
@@ -190,6 +280,7 @@ export function SeeyouclawTelephonePage({
   const callMessages = useMemo(() => visibleCallMessages(messages), [messages]);
   const assistant = useMemo(() => latestAssistantMessage(messages), [messages]);
   const displayTitle = title?.trim() || "seeyouclaw telephone";
+  const callIdentity = deepTalkEnabled ? "deeptalk" : "seeyouclaw";
 
   useEffect(() => {
     activeRef.current = active;
@@ -210,6 +301,19 @@ export function SeeyouclawTelephonePage({
   useEffect(() => {
     stopAgentRef.current = stop;
   }, [stop]);
+
+  useEffect(() => {
+    deepTalkProjectRef.current = deepTalkProject;
+  }, [deepTalkProject]);
+
+  useEffect(() => {
+    deepTalkEnabledRef.current = deepTalkEnabled;
+  }, [deepTalkEnabled]);
+
+  const touchVoiceActivity = useCallback(() => {
+    lastVoiceActivityRef.current = Date.now();
+    pauseHookSentRef.current = false;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -244,6 +348,11 @@ export function SeeyouclawTelephonePage({
       window.clearTimeout(interimCommitTimerRef.current);
       interimCommitTimerRef.current = null;
     }
+    if (finalCommitTimerRef.current) {
+      window.clearTimeout(finalCommitTimerRef.current);
+      finalCommitTimerRef.current = null;
+    }
+    pendingUtteranceRef.current = "";
     const recognition = recognitionRef.current;
     recognitionRef.current = null;
     if (!recognition) return;
@@ -284,6 +393,29 @@ export function SeeyouclawTelephonePage({
       isFinalizingUtteranceRef.current = false;
     }
   }, [finalizeSegment, hybridEnabled, stopListening]);
+
+  const scheduleUtteranceCommit = useCallback((text: string) => {
+    const next = normalizeSpokenText(text);
+    if (!next) return;
+    pendingUtteranceRef.current = mergeUtteranceParts(pendingUtteranceRef.current, next);
+    const pending = pendingUtteranceRef.current;
+    if (finalCommitTimerRef.current) {
+      window.clearTimeout(finalCommitTimerRef.current);
+      finalCommitTimerRef.current = null;
+    }
+    const incomplete = isLikelyIncompleteUtterance(pending);
+    finalCommitTimerRef.current = window.setTimeout(() => {
+      finalCommitTimerRef.current = null;
+      const committed = pendingUtteranceRef.current;
+      pendingUtteranceRef.current = "";
+      if (isLikelyIncompleteUtterance(committed)) {
+        setInterimTranscript("");
+        setSpeechLabel("Listening");
+        return;
+      }
+      void dispatchUtterance(committed);
+    }, incomplete ? TELEPHONE_INCOMPLETE_UTTERANCE_MS : TELEPHONE_FINAL_STABLE_MS);
+  }, [dispatchUtterance]);
 
   const stopSpeech = useCallback(() => {
     speakingRef.current = false;
@@ -362,6 +494,7 @@ export function SeeyouclawTelephonePage({
     recognition.interimResults = true;
     recognition.lang = "zh-CN";
     recognition.onresult = (event) => {
+      touchVoiceActivity();
       let finalText = "";
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
@@ -381,13 +514,17 @@ export function SeeyouclawTelephonePage({
         interimCommitTimerRef.current = null;
       }
       if (normalized) {
-        void dispatchUtterance(normalized);
+        scheduleUtteranceCommit(normalized);
         return;
       }
       if (interimText) {
+        if (finalCommitTimerRef.current) {
+          window.clearTimeout(finalCommitTimerRef.current);
+          finalCommitTimerRef.current = null;
+        }
         interimCommitTimerRef.current = window.setTimeout(() => {
           interimCommitTimerRef.current = null;
-          void dispatchUtterance(interimText);
+          scheduleUtteranceCommit(interimText);
         }, TELEPHONE_INTERIM_STABLE_MS);
       }
     };
@@ -416,7 +553,7 @@ export function SeeyouclawTelephonePage({
     } catch {
       recognitionRef.current = null;
     }
-  }, [dispatchUtterance, hybridEnabled, interruptAssistant, startSegment, stopListening]);
+  }, [hybridEnabled, interruptAssistant, scheduleUtteranceCommit, startSegment, stopListening, touchVoiceActivity]);
 
   useEffect(() => {
     startListeningRef.current = startListening;
@@ -467,6 +604,19 @@ export function SeeyouclawTelephonePage({
     try {
       const snapshot = await camera.capture({ maxWidth: 720, quality: 0.68 });
       cooldownUntilRef.current = Date.now() + CAPTURE_COOLDOWN_MS;
+      let frameCount = 1;
+      if (deepTalkEnabledRef.current && camera.state === "ready") {
+        try {
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, DEEPTALK_OBSERVATION_FRAME_GAP_MS);
+          });
+          await camera.capture({ maxWidth: 480, quality: 0.62 });
+          frameCount = 2;
+        } catch {
+          // Single-frame observation is still useful.
+        }
+        pendingObservationTextRef.current = formatDeepTalkObservationText(frameCount, decision);
+      }
       return {
         media: {
           data_url: snapshot.dataUrl,
@@ -496,22 +646,123 @@ export function SeeyouclawTelephonePage({
     return next;
   }, [chatId, onCreateChat, workspaceScope]);
 
+  const ensureDeepTalkProject = useCallback(async (
+    nextChatId: string,
+    seedText?: string,
+  ): Promise<SeeyouclawDeepTalkProject | null> => {
+    const current = deepTalkProjectRef.current;
+    if (current?.chatId === nextChatId) return current;
+    setDeepTalkStatus("Project syncing");
+    setDeepTalkError(null);
+    try {
+      const response = await ensureSeeyouclawDeepTalkProject(token, {
+        chatId: nextChatId,
+        title: displayTitle,
+        ...(seedText ? { seedText: compactDeepTalkText(seedText) } : {}),
+      });
+      setDeepTalkProject(response.project);
+      setDeepTalkStatus("Project live");
+      return response.project;
+    } catch (error) {
+      setDeepTalkError(
+        error instanceof ApiError && error.status === 404
+          ? "Restart gateway to enable DeepTalk project sync"
+          : "Project sync failed",
+      );
+      setDeepTalkStatus("Project offline");
+      return null;
+    }
+  }, [displayTitle, token]);
+
+  const updateDeepTalkProject = useCallback((payload: {
+    assistantText?: string;
+    chatId?: string;
+    hookText?: string;
+    observationText?: string;
+    projectId?: string;
+    userText?: string;
+  }) => {
+    const observationText = payload.observationText
+      ?? pendingObservationTextRef.current
+      ?? undefined;
+    if (observationText && !payload.observationText) {
+      pendingObservationTextRef.current = null;
+    }
+    const syncPayload = {
+      ...payload,
+      ...(payload.userText ? { userText: compactDeepTalkText(payload.userText) } : {}),
+      ...(payload.assistantText ? {
+        assistantText: compactDeepTalkText(payload.assistantText),
+      } : {}),
+      ...(observationText ? {
+        observationText: compactDeepTalkText(observationText),
+      } : {}),
+      ...(payload.hookText ? { hookText: compactDeepTalkText(payload.hookText) } : {}),
+    };
+    void updateSeeyouclawDeepTalkProject(token, syncPayload)
+      .then((response) => {
+        setDeepTalkProject(response.project);
+        setDeepTalkStatus("Project updated");
+        setDeepTalkError(null);
+      })
+      .catch(() => {
+        setDeepTalkError("Project update delayed");
+        setDeepTalkStatus("Project offline");
+      });
+  }, [token]);
+
   const sendUtterance = useCallback(async (text: string) => {
     if (!activeRef.current || isStreamingRef.current) return;
     const nextChatId = await ensureChat();
     if (!nextChatId) return;
     setMode("thinking");
     setSpeechLabel("Thinking");
+    touchVoiceActivity();
+    if (deepTalkEnabled) {
+      void ensureDeepTalkProject(nextChatId, text).then((project) => {
+        if (project) updateDeepTalkProject({ projectId: project.id, userText: text });
+      });
+    }
     const image = await prepareVisionImage(text);
     send(
       text,
       image ? [image] : undefined,
       {
         seeyouclawTelephone: true,
+        ...(deepTalkEnabled ? { seeyouclawDeepTalk: true } : {}),
         ...(image ? { modelPreset: SEEYOUCLAW_VISION_MODEL_PRESET } : {}),
       },
     );
-  }, [ensureChat, prepareVisionImage, send]);
+  }, [
+    deepTalkEnabled,
+    ensureChat,
+    ensureDeepTalkProject,
+    prepareVisionImage,
+    send,
+    touchVoiceActivity,
+    updateDeepTalkProject,
+  ]);
+
+  useEffect(() => {
+    if (!deepTalkEnabled || !active) return;
+    const timer = window.setInterval(() => {
+      if (!activeRef.current || !deepTalkEnabledRef.current) return;
+      if (isStreamingRef.current || speakingRef.current) return;
+      if (micMutedRef.current) return;
+      if (mode !== "listening") return;
+      const idleMs = Date.now() - lastVoiceActivityRef.current;
+      if (idleMs < DEEPTALK_PAUSE_HOOK_MS) return;
+      if (pauseHookSentRef.current) return;
+      const project = deepTalkProjectRef.current;
+      if (!project) return;
+      pauseHookSentRef.current = true;
+      updateDeepTalkProject({
+        projectId: project.id,
+        hookText: "Long pause detected; revisit the open question or offer a gentle checkpoint.",
+      });
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [active, deepTalkEnabled, mode, updateDeepTalkProject]);
 
   useEffect(() => {
     const onFinal = (event: Event) => {
@@ -525,31 +776,32 @@ export function SeeyouclawTelephonePage({
   const speakAssistant = useCallback(async (text: string) => {
     const spokenText = normalizeSpokenText(text);
     if (!spokenText) return;
+    touchVoiceActivity();
     speakingRef.current = true;
     setMode("speaking");
-    setSpeechLabel("Speaking");
+    setSpeechLabel("Preparing voice");
     stopListening(true);
     startListeningRef.current({ bargeIn: true });
     try {
-      const cloudPromise = fetchSeeyouclawTelephoneSpeech(token, {
+      const cloud = await fetchSeeyouclawTelephoneSpeech(token, {
         text: spokenText,
         model: TELEPHONE_AUDIO_MODEL,
         voice: TELEPHONE_VOICE,
         format: "wav",
       }).catch(() => null);
-      const cloud = await Promise.race([
-        cloudPromise,
-        new Promise<null>((resolve) => {
-          window.setTimeout(() => resolve(null), TELEPHONE_AUDIO_GRACE_MS);
-        }),
-      ]);
       if (cloud?.ok && cloud.audioDataUrl) {
+        const providerLabel = cloud.provider === "doubao" ? "Doubao voice" : "Qwen voice";
+        setSpeechLabel(providerLabel);
         await playAudio(cloud.audioDataUrl);
       } else {
+        setSpeechLabel(
+          cloud?.reason ? `Browser fallback: ${cloud.reason}` : "Browser voice fallback",
+        );
         await speakWithBrowser(spokenText);
       }
     } catch {
       try {
+        setSpeechLabel("Browser voice fallback");
         await speakWithBrowser(spokenText);
       } catch {
         setSpeechLabel("Text only");
@@ -563,7 +815,7 @@ export function SeeyouclawTelephonePage({
         startListeningRef.current();
       }
     }
-  }, [playAudio, speakWithBrowser, stopListening, token]);
+  }, [playAudio, speakWithBrowser, stopListening, touchVoiceActivity, token]);
 
   useEffect(() => {
     if (!active || isStreaming || !assistant?.content.trim()) return;
@@ -572,12 +824,31 @@ export function SeeyouclawTelephonePage({
     void speakAssistant(assistant.content);
   }, [active, assistant?.content, assistant?.id, isStreaming, speakAssistant]);
 
+  useEffect(() => {
+    if (!deepTalkEnabled || isStreaming || !assistant?.content.trim()) return;
+    if (assistant.id === latestProjectAssistantIdRef.current) return;
+    const project = deepTalkProjectRef.current;
+    if (!project) return;
+    latestProjectAssistantIdRef.current = assistant.id;
+    updateDeepTalkProject({
+      assistantText: assistant.content,
+      projectId: project.id,
+    });
+  }, [
+    assistant?.content,
+    assistant?.id,
+    deepTalkEnabled,
+    isStreaming,
+    updateDeepTalkProject,
+  ]);
+
   const startCall = useCallback(async () => {
     dismissStreamError();
     setError(null);
     setActive(true);
     setMode("connecting");
     setSpeechLabel("Connecting");
+    touchVoiceActivity();
     const opened = await ensureChat();
     if (!opened) {
       setActive(false);
@@ -586,6 +857,7 @@ export function SeeyouclawTelephonePage({
     }
     latestSpokenAssistantIdRef.current = assistant?.id ?? null;
     await camera.start();
+    if (deepTalkEnabled) void ensureDeepTalkProject(opened);
     if (canUseSpeechRecognition && !micMutedRef.current) startListening();
     else if (micMutedRef.current) {
       setMode("muted");
@@ -600,7 +872,10 @@ export function SeeyouclawTelephonePage({
     canUseSpeechRecognition,
     dismissStreamError,
     ensureChat,
+    ensureDeepTalkProject,
+    deepTalkEnabled,
     startListening,
+    touchVoiceActivity,
   ]);
 
   const endCall = useCallback(() => {
@@ -638,6 +913,33 @@ export function SeeyouclawTelephonePage({
     });
   }, [stopListening]);
 
+  const toggleDeepTalk = useCallback(() => {
+    setDeepTalkEnabled((current) => {
+      const next = !current;
+      if (next) {
+        setDeepTalkStatus("Project standby");
+        setDeepTalkError(null);
+        if (chatId) void ensureDeepTalkProject(chatId);
+      }
+      return next;
+    });
+  }, [chatId, ensureDeepTalkProject]);
+
+  const archiveDeepTalk = useCallback(async () => {
+    const project = deepTalkProjectRef.current;
+    if (!project) return;
+    setDeepTalkStatus("Archiving");
+    setDeepTalkError(null);
+    try {
+      const response = await archiveSeeyouclawDeepTalkProject(token, { projectId: project.id });
+      setDeepTalkProject(response.project);
+      setDeepTalkStatus(response.archivePath ? "Archived snapshot" : "Archived");
+    } catch {
+      setDeepTalkError("Archive failed");
+      setDeepTalkStatus("Project offline");
+    }
+  }, [token]);
+
   useEffect(() => {
     return () => {
       stopListening(true);
@@ -651,7 +953,7 @@ export function SeeyouclawTelephonePage({
     ? (streamError.kind === "message_too_big" ? "Message too large" : "Workspace rejected")
     : null;
   const statusText = error || streamErrorText || speechLabel;
-  const liveText = interimTranscript || lastUserText || "seeyouclaw";
+  const liveText = interimTranscript || lastUserText || callIdentity;
   const pulseActive = active && (mode === "listening" || mode === "speaking" || isStreaming);
   const ambientMotion = mode === "idle" || mode === "connecting" || mode === "muted";
   const levels = mode === "speaking"
@@ -663,8 +965,8 @@ export function SeeyouclawTelephonePage({
       : [12, 16, 14, 20, 16, 14, 12];
 
   return (
-    <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[#101113] text-white">
-      <div className="flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-3 sm:px-5">
+    <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground">
+      <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/60 bg-background/95 px-3 backdrop-blur sm:px-5">
         <div className="flex min-w-0 items-center gap-2">
           {onToggleSidebar ? (
             <Button
@@ -673,64 +975,63 @@ export function SeeyouclawTelephonePage({
               size="icon"
               aria-label="Toggle sidebar"
               onClick={onToggleSidebar}
-              className="h-8 w-8 rounded-full text-white/75 hover:bg-white/10 hover:text-white"
+              className="h-8 w-8 rounded-full text-muted-foreground hover:bg-muted/65 hover:text-foreground"
             >
               <PanelLeft className="h-4 w-4" />
             </Button>
           ) : null}
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold">{displayTitle}</div>
-            <div className="truncate text-xs text-white/50">{routeLabel}</div>
+            <div className="truncate text-xs text-muted-foreground">{routeLabel}</div>
           </div>
         </div>
-        <div className="flex items-center gap-2 text-xs text-white/60">
-          <Radio className={cn("h-4 w-4", pulseActive && "animate-pulse text-emerald-300")} />
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Radio className={cn("h-4 w-4", pulseActive && "animate-pulse text-emerald-500")} />
           <span className="hidden sm:inline">{statusText}</span>
         </div>
       </div>
 
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="relative min-h-0 overflow-hidden">
+        <div className="relative min-h-0 overflow-hidden bg-muted/35">
           <video
             ref={camera.videoRef}
             className={cn(
-              "h-full w-full bg-black object-cover",
-              camera.state !== "ready" && "opacity-30",
+              "h-full w-full bg-muted object-cover",
+              camera.state !== "ready" && "opacity-20 dark:opacity-35",
             )}
             muted
             playsInline
           />
-          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.20),rgba(0,0,0,0.12)_45%,rgba(0,0,0,0.55))]" />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-background/10 via-transparent to-background/75" />
           <div className="absolute left-1/2 top-1/2 flex h-52 w-52 -translate-x-1/2 -translate-y-1/2 items-center justify-center">
             <div
               className={cn(
-                "absolute h-36 w-36 rounded-full border border-emerald-300/30",
+                "absolute h-36 w-36 rounded-full border border-emerald-500/30",
                 pulseActive && "animate-ping",
                 ambientMotion && "motion-safe:animate-pulse",
               )}
             />
             <div
               className={cn(
-                "absolute h-48 w-48 rounded-full border border-cyan-200/15",
+                "absolute h-48 w-48 rounded-full border border-sky-500/15",
                 (mode === "speaking" || ambientMotion) && "motion-safe:animate-pulse",
               )}
             />
-            <div className="relative flex h-28 w-28 items-center justify-center rounded-full border border-white/15 bg-black/45 shadow-2xl backdrop-blur">
+            <div className="relative flex h-28 w-28 items-center justify-center rounded-full border border-border/70 bg-card/85 shadow-[0_18px_55px_rgba(15,23,42,0.16)] backdrop-blur dark:shadow-[0_22px_55px_rgba(0,0,0,0.34)]">
               {mode === "speaking" ? (
-                <Volume2 className="h-9 w-9 text-emerald-200" />
+                <Volume2 className="h-9 w-9 text-emerald-500" />
               ) : (
-                <Phone className="h-9 w-9 text-white/85" />
+                <Phone className="h-9 w-9 text-foreground/85" />
               )}
             </div>
           </div>
 
-          <div className="absolute bottom-24 left-1/2 flex -translate-x-1/2 items-end gap-1 rounded-full border border-white/10 bg-black/35 px-4 py-3 backdrop-blur">
+          <div className="absolute bottom-24 left-1/2 flex -translate-x-1/2 items-end gap-1 rounded-full border border-border/70 bg-card/85 px-4 py-3 shadow-[0_14px_38px_rgba(15,23,42,0.10)] backdrop-blur dark:shadow-[0_18px_38px_rgba(0,0,0,0.30)]">
             {levels.map((height, index) => (
               <span
-                // eslint-disable-next-line react/no-array-index-key
-                key={index}
+                key={`${height}-${index}`}
                 className={cn(
-                  "w-1.5 rounded-full bg-emerald-200/85 transition-all duration-300",
+                  "w-1.5 rounded-full bg-emerald-500/85 transition-all duration-300",
                   (pulseActive || ambientMotion) && "motion-safe:animate-pulse",
                 )}
                 style={{ height, animationDelay: `${index * 90}ms` }}
@@ -739,7 +1040,7 @@ export function SeeyouclawTelephonePage({
           </div>
 
           <div className="absolute inset-x-4 bottom-4 flex flex-col gap-3 sm:inset-x-8">
-            <div className="min-h-10 rounded-md border border-white/10 bg-black/35 px-4 py-2 text-center text-sm text-white/85 backdrop-blur">
+            <div className="min-h-10 rounded-md border border-border/70 bg-card/88 px-4 py-2 text-center text-sm text-foreground/85 shadow-[0_10px_30px_rgba(15,23,42,0.08)] backdrop-blur dark:shadow-[0_14px_30px_rgba(0,0,0,0.26)]">
               {liveText}
             </div>
             <div className="flex items-center justify-center gap-3">
@@ -750,9 +1051,25 @@ export function SeeyouclawTelephonePage({
                 aria-label={micMuted ? "Unmute microphone" : "Mute microphone"}
                 onClick={toggleMic}
                 disabled={!active}
-                className="h-11 w-11 rounded-full bg-white/10 text-white hover:bg-white/20"
+                className="h-11 w-11 rounded-full border border-border/70 bg-card/90 text-foreground shadow-[0_8px_22px_rgba(15,23,42,0.08)] hover:bg-muted/70"
               >
                 {micMuted ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                aria-label="Toggle DeepTalk mode"
+                aria-pressed={deepTalkEnabled}
+                onClick={toggleDeepTalk}
+                className={cn(
+                  "h-11 min-w-[112px] rounded-full px-3 text-xs font-semibold shadow-[0_8px_22px_rgba(15,23,42,0.08)]",
+                  deepTalkEnabled
+                    ? "bg-sky-500 text-white hover:bg-sky-600 dark:bg-sky-300 dark:text-slate-950 dark:hover:bg-sky-200"
+                    : "border border-border/70 bg-card/90 text-foreground hover:bg-muted/70",
+                )}
+              >
+                <Brain className="mr-2 h-4 w-4" />
+                DEEPTALK
               </Button>
               {active ? (
                 <Button
@@ -780,7 +1097,7 @@ export function SeeyouclawTelephonePage({
                 aria-label="Reset audio"
                 onClick={interruptAssistant}
                 disabled={!active}
-                className="h-11 w-11 rounded-full bg-white/10 text-white hover:bg-white/20"
+                className="h-11 w-11 rounded-full border border-border/70 bg-card/90 text-foreground shadow-[0_8px_22px_rgba(15,23,42,0.08)] hover:bg-muted/70"
               >
                 <RotateCcw className="h-5 w-5" />
               </Button>
@@ -788,18 +1105,139 @@ export function SeeyouclawTelephonePage({
           </div>
         </div>
 
-        <aside className="min-h-0 border-t border-white/10 bg-[#181511] lg:border-l lg:border-t-0">
+        <aside className="min-h-0 border-t border-border/60 bg-background lg:border-l lg:border-t-0">
           <div className="flex h-full min-h-0 flex-col">
-            <div className="flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-4">
+            <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/60 bg-background/95 px-4">
               <div className="flex items-center gap-2 text-sm font-medium">
-                <Video className="h-4 w-4 text-amber-200" />
-                <span>Telephone</span>
+                <Video className="h-4 w-4 text-amber-500" />
+                <span>{deepTalkEnabled ? "DeepTalk" : "Telephone"}</span>
               </div>
-              <span className="text-xs text-white/50">{chatId ? "Nanobot context" : "Standby"}</span>
+              <span className="text-xs text-muted-foreground">
+                {chatId ? (deepTalkEnabled ? deepTalkStatus : "Nanobot context") : "Standby"}
+              </span>
             </div>
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-muted/20 px-4 py-4">
+              {deepTalkEnabled ? (
+                <div className="space-y-3 rounded-md border border-sky-500/20 bg-sky-500/[0.055] p-3 dark:border-sky-300/20 dark:bg-sky-300/[0.08]">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-xs font-semibold uppercase text-sky-700/85 dark:text-sky-200/85">
+                        <FolderKanban className="h-3.5 w-3.5" />
+                        Project
+                      </div>
+                      <div className="mt-1 break-words text-sm font-semibold text-foreground">
+                        {deepTalkProject?.title ?? displayTitle}
+                      </div>
+                      <div className="mt-0.5 break-all text-[11px] text-muted-foreground">
+                        {deepTalkProject?.path ?? "Preparing workspace"}
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Archive DeepTalk project"
+                      onClick={archiveDeepTalk}
+                      disabled={!deepTalkProject}
+                      className="h-8 w-8 shrink-0 rounded-full border border-border/60 bg-background/75 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    >
+                      <Archive className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  {deepTalkError ? (
+                    <div className="rounded-md border border-destructive/25 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
+                      {deepTalkError}
+                    </div>
+                  ) : null}
+
+                  <div className="space-y-2 text-xs leading-5 text-foreground/75">
+                    <div className="border-t border-border/55 pt-2">
+                      <div className="mb-1 text-[11px] font-semibold uppercase text-muted-foreground">
+                        Why
+                      </div>
+                      <div className="break-words">
+                        {deepTalkProject?.summary.why || "Waiting for a focused opening."}
+                      </div>
+                    </div>
+                    <div className="border-t border-border/55 pt-2">
+                      <div className="mb-1 text-[11px] font-semibold uppercase text-muted-foreground">
+                        Current
+                      </div>
+                      <div className="break-words">
+                        {deepTalkProject?.summary.current || "No project turn synced yet."}
+                      </div>
+                    </div>
+                    <div className="border-t border-border/55 pt-2">
+                      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase text-muted-foreground">
+                        <CircleHelp className="h-3 w-3" />
+                        Questions
+                      </div>
+                      <div className="space-y-1">
+                        {(deepTalkProject?.summary.open_questions ?? [
+                          "What concrete outcome should this DeepTalk produce?",
+                        ]).map((item) => (
+                          <div key={item} className="break-words">
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="border-t border-border/55 pt-2">
+                      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase text-muted-foreground">
+                        <MessagesSquare className="h-3 w-3" />
+                        Moves
+                      </div>
+                      <div className="space-y-1">
+                        {(deepTalkProject?.summary.guidance_moves ?? [
+                          "Mirror, frame, offer lanes, and close with one question.",
+                        ]).map((item) => (
+                          <div key={item} className="break-words">
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="border-t border-border/55 pt-2">
+                      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase text-muted-foreground">
+                        <Sparkles className="h-3 w-3" />
+                        Signals
+                      </div>
+                      <div className="space-y-1">
+                        {(deepTalkProject?.summary.proactive_signals ?? [
+                          "SDD questions, empathy, observation windows, and hooks.",
+                        ]).map((item) => (
+                          <div key={item} className="break-words">
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="border-t border-border/55 pt-2">
+                      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase text-muted-foreground">
+                        <ListChecks className="h-3 w-3" />
+                        Tasks
+                      </div>
+                      <div className="space-y-1">
+                        {(deepTalkProject?.summary.tasks ?? [
+                          "Clarify the main question.",
+                        ]).map((item) => (
+                          <div key={item} className="break-words">
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between border-t border-border/55 pt-2 text-[11px] text-muted-foreground">
+                    <span>{deepTalkProject?.turnCount ?? 0} turns</span>
+                    <span>{deepTalkProject?.archiveCount ?? 0} archives</span>
+                  </div>
+                </div>
+              ) : null}
               {callMessages.length === 0 ? (
-                <div className="rounded-md border border-white/10 bg-white/[0.04] px-3 py-3 text-sm text-white/55">
+                <div className="rounded-md border border-border/60 bg-background/70 px-3 py-3 text-sm text-muted-foreground">
                   {canUseSpeechRecognition ? "Ready" : "Mic unavailable"}
                 </div>
               ) : (
@@ -809,14 +1247,14 @@ export function SeeyouclawTelephonePage({
                     className={cn(
                       "rounded-md border px-3 py-2 text-sm leading-6",
                       message.role === "user"
-                        ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-50"
-                        : "border-amber-200/20 bg-amber-200/10 text-amber-50",
+                        ? "border-emerald-500/20 bg-emerald-500/[0.075] text-emerald-800 dark:text-emerald-100"
+                        : "border-amber-500/20 bg-amber-500/[0.075] text-amber-800 dark:text-amber-100",
                     )}
                   >
-                    <div className="mb-1 text-[11px] uppercase text-white/45">
-                      {message.role === "user" ? "You" : "seeyouclaw"}
+                    <div className="mb-1 text-[11px] uppercase text-muted-foreground">
+                      {message.role === "user" ? "You" : callIdentity}
                     </div>
-                    <div className="line-clamp-5 whitespace-pre-wrap break-words">
+                    <div className="whitespace-pre-wrap break-words">
                       {message.content}
                     </div>
                   </div>

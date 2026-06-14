@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  archiveSeeyouclawDeepTalkProject,
   createModelConfiguration,
   deleteSession,
+  ensureSeeyouclawDeepTalkProject,
   fetchFilePreview,
   fetchCliApps,
   fetchMcpPresets,
@@ -22,6 +24,7 @@ import {
   runCliAppAction,
   runMcpPresetAction,
   saveCustomMcpServer,
+  updateSeeyouclawDeepTalkProject,
   updateSidebarState,
   updateImageGenerationSettings,
   updateModelConfiguration,
@@ -129,6 +132,34 @@ describe("webui API helpers", () => {
         headers: { Authorization: "Bearer tok" },
       }),
     );
+  });
+
+  it("serializes seeyouclaw DeepTalk project actions", async () => {
+    await ensureSeeyouclawDeepTalkProject("tok", {
+      chatId: "chat-1",
+      seedText: "idea",
+      title: "DeepTalk",
+    });
+    await updateSeeyouclawDeepTalkProject("tok", {
+      hookText: "archive readiness",
+      observationText: "video window",
+      projectId: "project-1",
+      userText: "next thought",
+    });
+    await archiveSeeyouclawDeepTalkProject("tok", { projectId: "project-1" });
+
+    const calls = vi.mocked(fetch).mock.calls.map((call) => String(call[0]));
+    expect(calls[0]).toContain("/api/seeyouclaw/deeptalk/ensure?");
+    expect(JSON.parse(new URL(calls[0], "http://test").searchParams.get("payload") ?? "{}"))
+      .toMatchObject({ chatId: "chat-1", title: "DeepTalk" });
+    expect(calls[1]).toContain("/api/seeyouclaw/deeptalk/update?");
+    expect(JSON.parse(new URL(calls[1], "http://test").searchParams.get("payload") ?? "{}"))
+      .toMatchObject({
+        hookText: "archive readiness",
+        observationText: "video window",
+        projectId: "project-1",
+      });
+    expect(calls[2]).toContain("/api/seeyouclaw/deeptalk/archive?");
   });
 
   it("serializes settings updates as a narrow query string", async () => {

@@ -105,16 +105,52 @@ Notes:
 - When no cloud transcription provider is configured, WebUI can fall back to
   browser speech recognition for a local demo path.
 
-## Qwen Omni Telephone Audio
+## Telephone Reply Audio
 
-The telephone page uses the same DashScope credential and calls
+The telephone page now uses a provider fallback chain:
+
+1. Doubao V3 bidirectional WebSocket TTS, when `DOUBAO_TTS_API_KEY` is set.
+2. Qwen Omni speech through DashScope, when `DASHSCOPE_API_KEY` is set.
+3. Browser built-in speech synthesis, when cloud speech is unavailable.
+
+Set the Doubao key in the terminal that starts nanobot:
+
+Windows PowerShell:
+
+```powershell
+$env:DOUBAO_TTS_API_KEY = "<your-doubao-tts-key>"
+```
+
+macOS / Linux:
+
+```bash
+export DOUBAO_TTS_API_KEY="<your-doubao-tts-key>"
+```
+
+Defaults:
+
+- endpoint: `wss://openspeech.bytedance.com/api/v3/tts/bidirection`
+- resource id: `seed-tts-2.0`
+- voice: `zh_female_xiaohe_uranus_bigtts`
+- output format: `mp3`
+
+Optional environment overrides:
+
+```powershell
+$env:DOUBAO_TTS_VOICE = "zh_female_xiaohe_uranus_bigtts"
+$env:DOUBAO_TTS_RESOURCE_ID = "seed-tts-2.0"
+$env:DOUBAO_TTS_FORMAT = "mp3"
+```
+
+If Doubao is not configured or returns no usable audio, the telephone page uses
+the same DashScope credential and calls
 `qwen3-omni-flash` with `modalities: ["text", "audio"]`,
 `audio: { "voice": "Ethan", "format": "wav" }`, and `stream: true`.
 
-No extra secret is needed beyond `DASHSCOPE_API_KEY`. The WebUI endpoint is
-protected by the normal WebUI API token and returns a browser-playable audio
-data URL. If the provider is unavailable, the telephone page falls back to the
-browser's built-in speech synthesis.
+The WebUI endpoint is protected by the normal WebUI API token and returns a
+browser-playable audio data URL. The Telephone page displays `Doubao voice`,
+`Qwen voice`, or a browser fallback reason so demo-time audio regressions are
+visible.
 
 ## WebUI Gateway
 
@@ -155,13 +191,15 @@ To switch to a different provider, change only:
 - `agents.defaults.modelPreset`
 - `transcription.provider`
 - `transcription.model`
-- telephone speech `model` / `voice` constants in the seeyouclaw telephone
-  module, if the audio voice provider changes
+- telephone speech env vars such as `DOUBAO_TTS_VOICE`,
+  `DOUBAO_TTS_RESOURCE_ID`, or the Qwen fallback `model` / `voice` constants in
+  the seeyouclaw telephone module
 
 DeepSeek is currently used as the low-latency text provider. DashScope Qwen ASR
 handles speech-to-text. The semantic router uses DeepSeek only for locally
 ambiguous text turns; obvious visual requests and ordinary turns stay on the
 local rule path. For stronger visual understanding, add a vision-capable
 provider preset and route image-heavy turns to that preset in a later PR. Qwen
-Omni is used only for the telephone page's reply audio layer, while the actual
-response still comes from nanobot's normal context-managed agent loop.
+Doubao and Qwen Omni are used only for the telephone page's reply audio layer,
+while the actual response still comes from nanobot's normal context-managed
+agent loop.

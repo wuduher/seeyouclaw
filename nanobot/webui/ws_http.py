@@ -365,7 +365,7 @@ class GatewayHTTPHandler:
             if action == "ensure":
                 response = ensure_deeptalk_project(self.skills_workspace_path, payload)
             elif action == "update":
-                response = update_deeptalk_project(self.skills_workspace_path, payload)
+                response = await update_deeptalk_project(self.skills_workspace_path, payload)
             elif action == "read":
                 response = read_deeptalk_project(self.skills_workspace_path, payload)
             elif action == "archive":

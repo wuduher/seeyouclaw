@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
+from nanobot.providers.base import LLMResponse
+from nanobot.webui import seeyouclaw_deeptalk_updater as updater
 from nanobot.webui.seeyouclaw_deeptalk import (
     archive_deeptalk_project,
     ensure_deeptalk_project,
     read_deeptalk_project,
     update_deeptalk_project,
 )
+
+
+def _run_update(tmp_path: Path, payload: dict) -> dict:
+    return asyncio.run(update_deeptalk_project(tmp_path, payload))
 
 
 def test_deeptalk_project_creation_writes_openspec_shape(tmp_path: Path) -> None:
@@ -25,15 +34,16 @@ def test_deeptalk_project_creation_writes_openspec_shape(tmp_path: Path) -> None
     assert result["ok"] is True
     assert project["chatId"] == "chat-1"
     assert project["summary"]["why"] == "Explore a low-cost multimodal routing idea."
-    assert any("SDD questions" in item for item in project["summary"]["proactive_signals"])
-    assert any("Multimodal observation window" in item for item in project["summary"]["proactive_signals"])
-    assert any("Mirror" in item for item in project["summary"]["guidance_moves"])
-    assert any("Offer lanes" in item for item in project["summary"]["guidance_moves"])
+    assert project["summary"]["lane"] == "mixed"
     assert (project_dir / "proposal.md").exists()
     assert (project_dir / "design.md").exists()
     assert (project_dir / "tasks.md").exists()
     assert (project_dir / "specs" / "main" / "spec.md").exists()
     assert (project_dir / "notes.md").read_text(encoding="utf-8") == "# Notes\n"
+    design = (project_dir / "design.md").read_text(encoding="utf-8")
+    assert "DeepTalk Runtime" not in design
+    spec = (project_dir / "specs" / "main" / "spec.md").read_text(encoding="utf-8")
+    assert "Preserve DeepTalk continuity" not in spec
 
 
 def test_deeptalk_project_reuses_existing_chat(tmp_path: Path) -> None:
@@ -48,11 +58,12 @@ def test_deeptalk_project_updates_summary_and_notes(tmp_path: Path) -> None:
     created = ensure_deeptalk_project(tmp_path, {"chatId": "chat-1", "title": "DeepTalk"})
     project_id = created["project"]["id"]
 
-    updated = update_deeptalk_project(
+    updated = _run_update(
         tmp_path,
         {
             "assistantText": "What outcome would make this worth archiving?",
             "projectId": project_id,
+            "skipLlm": True,
             "userText": "How should we design a project-like research discussion?",
         },
     )
@@ -74,12 +85,13 @@ def test_deeptalk_project_tracks_observation_and_hook_signals(tmp_path: Path) ->
     created = ensure_deeptalk_project(tmp_path, {"chatId": "chat-1", "title": "DeepTalk"})
     project_id = created["project"]["id"]
 
-    updated = update_deeptalk_project(
+    updated = _run_update(
         tmp_path,
         {
             "hookText": "Long pause; revisit stale open question before archive.",
             "observationText": "Video window: the user looks confused across several frames.",
             "projectId": project_id,
+            "skipLlm": True,
         },
     )
 
@@ -93,19 +105,17 @@ def test_deeptalk_project_tracks_observation_and_hook_signals(tmp_path: Path) ->
     notes = (project_dir / "notes.md").read_text(encoding="utf-8")
     assert "## Turn 1 - Observation" in notes
     assert "## Turn 1 - Hook" in notes
-    spec = (project_dir / "specs" / "main" / "spec.md").read_text(encoding="utf-8")
-    assert "observation window" in spec
-    assert "Guide spoken turns" in spec
 
 
 def test_deeptalk_project_records_spoken_guidance_moves(tmp_path: Path) -> None:
     created = ensure_deeptalk_project(tmp_path, {"chatId": "chat-1", "title": "DeepTalk"})
     project_id = created["project"]["id"]
 
-    updated = update_deeptalk_project(
+    updated = _run_update(
         tmp_path,
         {
             "projectId": project_id,
+            "skipLlm": True,
             "userText": (
                 "I am not sure where this is going; maybe it is an essay, "
                 "maybe a project, and I feel overwhelmed."
@@ -118,10 +128,7 @@ def test_deeptalk_project_records_spoken_guidance_moves(tmp_path: Path) -> None:
     assert any("Mirror" in item for item in moves)
     assert any("Frame" in item for item in moves)
     assert any("Offer lanes" in item for item in moves)
-    assert any("One-question close" in item for item in moves)
     assert "Spoken Guidance Moves" in project["files"]["proposal"]
-    assert "Voice Guidance Loop" in project["files"]["design"]
-    assert "Guide spoken turns" in project["files"]["spec"]
 
 
 def test_deeptalk_project_covers_acceptance_scenarios(tmp_path: Path) -> None:
@@ -164,9 +171,9 @@ def test_deeptalk_project_covers_acceptance_scenarios(tmp_path: Path) -> None:
             {"chatId": scenario["chatId"], "title": "Scenario DeepTalk"},
         )
         project_id = created["project"]["id"]
-        updated = update_deeptalk_project(
+        updated = _run_update(
             tmp_path,
-            {"projectId": project_id, "userText": scenario["text"]},
+            {"projectId": project_id, "skipLlm": True, "userText": scenario["text"]},
         )
 
         summary = updated["project"]["summary"]
@@ -185,10 +192,75 @@ def test_deeptalk_project_covers_acceptance_scenarios(tmp_path: Path) -> None:
             ), scenario["chatId"]
 
         files = updated["project"]["files"]
-        assert "OpenSpec-style state" in files["design"]
-        assert "Voice Guidance Loop" in files["design"]
-        assert "Subagent and DeepResearch Gate" in files["design"]
+        assert "Themes and Trade-offs" in files["design"]
         assert scenario["text"] in files["notes"]
+
+
+def test_deeptalk_project_llm_update_synthesizes_artifacts(tmp_path: Path, monkeypatch) -> None:
+    llm_payload = json.dumps(
+        {
+            "lane": "emotional_reflection",
+            "why": "The user wants emotional support around an ex-partner and stalled life momentum.",
+            "current": "They feel uncertain about internships, sleep, and whether to keep holding the past.",
+            "open_questions": [
+                "What feels hardest when you think about your ex right now?",
+            ],
+            "tasks": [
+                "Name one feeling that keeps returning this week.",
+            ],
+            "proactive_signals": [
+                "Empathy before structure.",
+            ],
+            "guidance_moves": [
+                "Mirror the loneliness before asking about next steps.",
+            ],
+            "design_notes": "Themes: breakup residue, internship anxiety, disrupted routine.",
+            "spec_body": (
+                "### Requirement: Hold emotional reflection without forcing a project frame\n\n"
+                "The host SHOULD help the user name feelings before proposing structure."
+            ),
+        }
+    )
+    provider = SimpleNamespace(
+        kwargs=None,
+        model="deepseek-v4-flash",
+    )
+
+    async def fake_chat_with_retry(**kwargs):
+        provider.kwargs = kwargs
+        return LLMResponse(content=llm_payload)
+
+    provider.chat_with_retry = fake_chat_with_retry
+
+    def fake_snapshot_loader(*, preset_name=None):
+        if preset_name in {"seeyouclaw-router", "deepseek-v4-flash"}:
+            raise ValueError("missing preset")
+        return SimpleNamespace(provider=provider, model="deepseek-v4-flash")
+
+    monkeypatch.setattr(updater, "load_provider_snapshot", fake_snapshot_loader)
+
+    created = ensure_deeptalk_project(tmp_path, {"chatId": "chat-llm", "title": "Emotional Talk"})
+    project_id = created["project"]["id"]
+    updated = _run_update(
+        tmp_path,
+        {
+            "projectId": project_id,
+            "userText": "I am single but still miss my ex and my internship search is going badly.",
+            "assistantText": "I hear the mix of longing and pressure. What feels most stuck right now?",
+        },
+    )
+
+    summary = updated["project"]["summary"]
+    assert summary["lane"] == "emotional_reflection"
+    assert "emotional support" in summary["why"]
+    assert "internship" in summary["current"]
+    assert any("ex" in item.lower() for item in summary["open_questions"])
+    assert "Themes:" in summary["design_notes"]
+    assert "emotional reflection" in summary["spec_body"].lower()
+    files = updated["project"]["files"]
+    assert "Preserve DeepTalk continuity" not in files["spec"]
+    assert "Themes and Trade-offs" in files["design"]
+    assert provider.kwargs["max_tokens"] == updater.UPDATER_MAX_TOKENS
 
 
 def test_deeptalk_project_archive_creates_snapshot(tmp_path: Path) -> None:

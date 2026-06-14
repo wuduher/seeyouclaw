@@ -31,7 +31,7 @@ import { fetchWithTimeout } from "./http";
 const API_READ_TIMEOUT_MS = 20_000;
 const SEEYOUCLAW_VISION_ROUTE_TIMEOUT_MS = 5_500;
 const SEEYOUCLAW_TELEPHONE_SPEECH_TIMEOUT_MS = 60_000;
-const SEEYOUCLAW_DEEPTALK_TIMEOUT_MS = 8_000;
+const SEEYOUCLAW_DEEPTALK_TIMEOUT_MS = 22_000;
 
 export class ApiError extends Error {
   status: number;
@@ -91,9 +91,12 @@ export async function fetchSeeyouclawTelephoneSpeech(
 
 export interface SeeyouclawDeepTalkSummary {
   current: string;
+  design_notes?: string;
   guidance_moves: string[];
+  lane?: string;
   open_questions: string[];
   proactive_signals: string[];
+  spec_body?: string;
   tasks: string[];
   why: string;
 }

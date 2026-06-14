@@ -171,14 +171,40 @@ This preserves nanobot compatibility:
 
 ## Current Limitations
 
-- The project sidecar is deterministic. It records compact state, but it does
-  not yet run a separate LLM spec-diff agent.
-- Multimodal observation windows are represented as text summaries; multi-frame
-  capture and video analysis are planned follow-ups.
 - Hook nudges are represented in the API/schema; timer and agent-hook wiring
   are planned follow-ups.
 - Archive creates a point-in-time snapshot; it does not yet ask a model to
   rewrite the project into a polished final document.
+- Multimodal `observationText` is not yet fed from multi-frame capture.
+
+The telephone UI now feeds compact `observationText` summaries when DeepTalk
+captures a vision frame (two snapshots when possible). A pause hook sends
+`hookText` after ~28s of listening silence.
+
+## Project Sidecar Updater
+
+Turn updates now prefer a low-cost LLM sidecar (`seeyouclaw_deeptalk_updater`)
+that synthesizes OpenSpec-style artifacts from recent notes plus the latest
+turn. It uses the same preset chain as the vision router (`seeyouclaw-router`,
+`deepseek-v4-flash`, then default).
+
+The updater returns structured fields for:
+
+| Field | Written to |
+|-------|------------|
+| `why`, `open_questions` | `proposal.md` |
+| `current`, `design_notes` | `design.md` |
+| `tasks` | `tasks.md` |
+| `spec_body` | `specs/main/spec.md` |
+| `lane` | `proposal.md` Lane section |
+
+Keyword-only rules remain as fallback when the updater is unavailable. The
+sidecar should synthesize meaning instead of copying ASR transcripts or
+writing generic DeepTalk boilerplate into user artifacts.
+
+The telephone UI waits until assistant streaming completes before syncing
+assistant text to the sidecar, so notes and synthesis use full replies rather
+than first-token fragments.
 
 ## Acceptance Script
 
@@ -232,8 +258,6 @@ Expected result:
 
 ## Future Work
 
-- Replace the deterministic updater with a separate low-cost DeepTalk sidecar
-  agent that proposes structured spec diffs.
 - Add an explicit UI affordance for approving a focused research subagent when
   the deepresearch gate is met.
 - Feed `observationText` from multi-frame or short-video analysis.

@@ -1,8 +1,9 @@
 """Disk-backed DeepTalk project scaffold for seeyouclaw.
 
-This module is intentionally deterministic. The nanobot conversation remains
-the source of truth for language quality, while this sidecar records a compact
-OpenSpec-style project shape that can be shown in the telephone UI.
+The live nanobot conversation remains the source of truth for spoken replies.
+This sidecar records an OpenSpec-style project shape for the telephone UI.
+Turn updates prefer a low-cost LLM synthesizer; deterministic keyword rules
+remain as fallback when the updater is unavailable.
 """
 
 from __future__ import annotations
@@ -23,18 +24,12 @@ MAX_FIELD_CHARS = 1_200
 MAX_FILE_CHARS = 6_000
 MAX_LIST_ITEMS = 6
 
-DEFAULT_PROACTIVE_SIGNALS = [
-    "SDD questions: clarify why, scope, requirements, scenarios, trade-offs, and tasks.",
-    "Empathy and curiosity: ask from the user's motivation, uncertainty, and emotional state.",
-    "Multimodal observation window: reason over available frames or video context, not one frozen keyframe.",
-    "Hook nudges: revisit stale questions, drift, long pauses, repeated uncertainty, or archive readiness.",
+DEFAULT_OPEN_QUESTIONS = [
+    "What would feel like a useful outcome from this DeepTalk?",
 ]
 
-DEFAULT_GUIDANCE_MOVES = [
-    "Mirror: name the user's felt state or core idea in one warm sentence.",
-    "Frame: say the project shape out loud with Why, Current, and Next labels.",
-    "Offer lanes: when the user is vague, offer two or three paths and ask them to choose.",
-    "One-question close: end with exactly one concrete confirming question.",
+DEFAULT_TASKS = [
+    "Name what matters most in this conversation right now.",
 ]
 
 ARCHIVE_KEYWORDS = (
@@ -171,17 +166,15 @@ def ensure_deeptalk_project(workspace_path: Path, payload: Mapping[str, Any]) ->
         "turn_count": 0,
         "archive_count": 0,
         "summary": {
-            "why": seed_text or "A DeepTalk exploration started from telephone mode.",
-            "current": seed_text or "Project opened; waiting for the first concrete direction.",
-            "open_questions": [
-                "What concrete outcome should this DeepTalk produce?",
-            ],
-            "tasks": [
-                "Clarify the main question.",
-                "Choose one concrete artifact to preserve.",
-            ],
-            "proactive_signals": list(DEFAULT_PROACTIVE_SIGNALS),
-            "guidance_moves": list(DEFAULT_GUIDANCE_MOVES),
+            "lane": "mixed",
+            "why": seed_text or "DeepTalk session opened; motivation not yet synthesized.",
+            "current": seed_text or "Waiting for the first substantive turn.",
+            "open_questions": list(DEFAULT_OPEN_QUESTIONS),
+            "tasks": list(DEFAULT_TASKS),
+            "proactive_signals": [],
+            "guidance_moves": [],
+            "design_notes": "",
+            "spec_body": "",
         },
     }
     project_dir = _project_dir(workspace_path, project_id)
@@ -193,7 +186,59 @@ def ensure_deeptalk_project(workspace_path: Path, payload: Mapping[str, Any]) ->
     return {"ok": True, "project": _project_response(workspace_path, project, project_dir)}
 
 
-def update_deeptalk_project(workspace_path: Path, payload: Mapping[str, Any]) -> dict[str, Any]:
+def _record_turn_payload(
+    project: dict[str, Any],
+    project_dir: Path,
+    *,
+    user_text: str,
+    assistant_text: str,
+    observation_text: str,
+    hook_text: str,
+) -> bool:
+    changed = False
+    turn = int(project.get("turn_count") or 0)
+    if user_text:
+        project["turn_count"] = turn + 1
+        turn = int(project["turn_count"])
+        _append_note(project_dir, turn, "User", user_text)
+        changed = True
+    if assistant_text:
+        _append_note(project_dir, max(turn, 1), "Assistant", assistant_text)
+        changed = True
+    if observation_text:
+        _append_note(project_dir, max(turn, 1), "Observation", observation_text)
+        changed = True
+    if hook_text:
+        _append_note(project_dir, max(turn, 1), "Hook", hook_text)
+        changed = True
+    return changed
+
+
+def _apply_llm_summary_update(project: dict[str, Any], llm_result: Mapping[str, Any]) -> None:
+    summary = _summary(project)
+    lane = str(llm_result.get("lane") or "").strip()
+    if lane:
+        summary["lane"] = lane
+    why = str(llm_result.get("why") or "").strip()
+    if why:
+        summary["why"] = why
+    current = str(llm_result.get("current") or "").strip()
+    if current:
+        summary["current"] = current
+    for key in ("open_questions", "tasks", "proactive_signals", "guidance_moves"):
+        items = llm_result.get(key)
+        if isinstance(items, list) and items:
+            summary[key] = [str(x) for x in items if str(x).strip()][:MAX_LIST_ITEMS]
+    design_notes = str(llm_result.get("design_notes") or "").strip()
+    if design_notes:
+        summary["design_notes"] = design_notes
+    spec_body = str(llm_result.get("spec_body") or "").strip()
+    if spec_body:
+        summary["spec_body"] = spec_body
+    project["summary"] = summary
+
+
+async def update_deeptalk_project(workspace_path: Path, payload: Mapping[str, Any]) -> dict[str, Any]:
     project = _resolve_project(workspace_path, payload)
     project_dir = _project_dir(workspace_path, project["id"])
     user_text = _clean_text(str(payload.get("userText") or ""), MAX_FIELD_CHARS)
@@ -204,29 +249,45 @@ def update_deeptalk_project(workspace_path: Path, payload: Mapping[str, Any]) ->
         return {"ok": True, "project": _project_response(workspace_path, project, project_dir)}
 
     now = _now_iso()
-    if user_text:
-        project["turn_count"] = int(project.get("turn_count") or 0) + 1
-        _append_note(project_dir, project["turn_count"], "User", user_text)
-        _update_summary_from_text(project, user_text, source="user")
-    if assistant_text:
-        _append_note(
-            project_dir,
-            int(project.get("turn_count") or 0),
-            "Assistant",
-            assistant_text,
-        )
-        _update_summary_from_text(project, assistant_text, source="assistant")
-    if observation_text:
-        _append_note(
-            project_dir,
-            int(project.get("turn_count") or 0),
-            "Observation",
-            observation_text,
-        )
-        _update_summary_from_text(project, observation_text, source="observation")
-    if hook_text:
-        _append_note(project_dir, int(project.get("turn_count") or 0), "Hook", hook_text)
-        _update_summary_from_text(project, hook_text, source="hook")
+    _record_turn_payload(
+        project,
+        project_dir,
+        user_text=user_text,
+        assistant_text=assistant_text,
+        observation_text=observation_text,
+        hook_text=hook_text,
+    )
+
+    skip_llm = payload.get("skipLlm") is True
+    llm_applied = False
+    if not skip_llm:
+        from nanobot.webui.seeyouclaw_deeptalk_updater import llm_synthesize_deeptalk_update
+
+        notes_path = project_dir / "notes.md"
+        notes_excerpt = notes_path.read_text(encoding="utf-8") if notes_path.exists() else ""
+        llm_result = await llm_synthesize_deeptalk_update({
+            "title": project.get("title"),
+            "turnCount": project.get("turn_count"),
+            "summary": _summary(project),
+            "notesExcerpt": notes_excerpt,
+            "userText": user_text,
+            "assistantText": assistant_text,
+            "observationText": observation_text,
+            "hookText": hook_text,
+        })
+        if llm_result is not None:
+            _apply_llm_summary_update(project, llm_result)
+            llm_applied = True
+
+    if not llm_applied:
+        if user_text:
+            _update_summary_from_text(project, user_text, source="user")
+        if assistant_text:
+            _update_summary_from_text(project, assistant_text, source="assistant")
+        if observation_text:
+            _update_summary_from_text(project, observation_text, source="observation")
+        if hook_text:
+            _update_summary_from_text(project, hook_text, source="hook")
 
     project["updated_at"] = now
     _write_json(project_dir / "project.json", project)
@@ -352,19 +413,23 @@ def _summary(project: Mapping[str, Any]) -> dict[str, Any]:
     raw = project.get("summary")
     if not isinstance(raw, dict):
         raw = {}
-    proactive = [str(x) for x in raw.get("proactive_signals") or [] if str(x).strip()]
-    if not proactive:
-        proactive = list(DEFAULT_PROACTIVE_SIGNALS)
-    guidance = [str(x) for x in raw.get("guidance_moves") or [] if str(x).strip()]
-    if not guidance:
-        guidance = list(DEFAULT_GUIDANCE_MOVES)
+    lane = str(raw.get("lane") or "mixed").strip()
+    if lane not in {"emotional_reflection", "research", "essay", "project_planning", "mixed"}:
+        lane = "mixed"
     return {
+        "lane": lane,
         "why": str(raw.get("why") or ""),
         "current": str(raw.get("current") or ""),
         "open_questions": [str(x) for x in raw.get("open_questions") or [] if str(x).strip()],
         "tasks": [str(x) for x in raw.get("tasks") or [] if str(x).strip()],
-        "proactive_signals": proactive[-MAX_LIST_ITEMS:],
-        "guidance_moves": guidance[-MAX_LIST_ITEMS:],
+        "proactive_signals": [
+            str(x) for x in raw.get("proactive_signals") or [] if str(x).strip()
+        ][-MAX_LIST_ITEMS:],
+        "guidance_moves": [
+            str(x) for x in raw.get("guidance_moves") or [] if str(x).strip()
+        ][-MAX_LIST_ITEMS:],
+        "design_notes": str(raw.get("design_notes") or ""),
+        "spec_body": str(raw.get("spec_body") or ""),
     }
 
 
@@ -437,7 +502,7 @@ def _update_summary_from_text(project: dict[str, Any], text: str, *, source: str
     summary = _summary(project)
     if source == "user":
         summary["current"] = text
-        if summary["why"].startswith("A DeepTalk exploration"):
+        if summary["why"].startswith("DeepTalk session opened"):
             summary["why"] = text
 
     for question in QUESTION_RE.findall(text):
@@ -540,14 +605,23 @@ def _markdown_list(items: list[str]) -> str:
 def _write_markdown_files(project_dir: Path, project: Mapping[str, Any]) -> None:
     summary = _summary(project)
     title = str(project.get("title") or "DeepTalk")
-    questions = _markdown_list(summary["open_questions"])
-    tasks = "\n".join(f"- [ ] {item}" for item in summary["tasks"]) or "- [ ] TBD"
-    proactive = _markdown_list(summary["proactive_signals"])
-    guidance = _markdown_list(summary["guidance_moves"])
+    questions = _markdown_list(summary["open_questions"] or DEFAULT_OPEN_QUESTIONS)
+    tasks = "\n".join(f"- [ ] {item}" for item in summary["tasks"] or DEFAULT_TASKS)
+    proactive = _markdown_list(summary["proactive_signals"]) if summary["proactive_signals"] else "- None yet"
+    guidance = _markdown_list(summary["guidance_moves"]) if summary["guidance_moves"] else "- None yet"
+    design_notes = summary["design_notes"].strip() or "No synthesized design notes yet."
+    spec_body = summary["spec_body"].strip() or (
+        "_Requirements will be synthesized from the conversation._"
+    )
+    lane = summary["lane"]
     project_dir.mkdir(parents=True, exist_ok=True)
     (project_dir / "proposal.md").write_text(
         "\n".join([
             f"# {title} Proposal",
+            "",
+            "## Lane",
+            "",
+            lane,
             "",
             "## Why",
             "",
@@ -576,31 +650,9 @@ def _write_markdown_files(project_dir: Path, project: Mapping[str, Any]) -> None
             "",
             summary["current"] or "TBD",
             "",
-            "## DeepTalk Runtime",
+            "## Themes and Trade-offs",
             "",
-            "- Telephone mode remains the live conversation loop.",
-            "- This project sidecar records the durable OpenSpec-style state.",
-            "- Sidecar updates are deterministic and should not block spoken replies.",
-            "",
-            "## Proactivity Model",
-            "",
-            "- SDD questions turn vague conversation into proposal, design, tasks, and specs.",
-            "- Empathy and curiosity questions respond to the user's state, motivation, and uncertainty.",
-            "- Multimodal observations should be treated as a recent window of frames or video context.",
-            "- Hook nudges can surface stale questions, drift, pause, follow-up, or archive readiness.",
-            "",
-            "## Voice Guidance Loop",
-            "",
-            "- Mirror the user's state or core idea in one sentence.",
-            "- Frame the lane out loud with Why, Current, and Next labels.",
-            "- Offer two or three lanes when the next step is ambiguous.",
-            "- Close with exactly one focused question.",
-            "",
-            "## Subagent and DeepResearch Gate",
-            "",
-            "- Emotional reflection, personal meaning-making, and early project framing stay in the main DeepTalk conversation.",
-            "- A focused subagent is useful only for external sources, literature review, benchmarks, competitor checks, or codebase-wide evidence.",
-            "- The main DeepTalk voice remains the host and synthesizer; research subagents return bounded evidence.",
+            design_notes,
             "",
         ]),
         encoding="utf-8",
@@ -620,49 +672,7 @@ def _write_markdown_files(project_dir: Path, project: Mapping[str, Any]) -> None
         "\n".join([
             f"# {title} Main Spec",
             "",
-            "## Requirements",
-            "",
-            "### Requirement: Preserve DeepTalk continuity",
-            "",
-            "The assistant SHOULD preserve a project record while the user explores an idea.",
-            "",
-            "#### Scenario: User adds a new thought",
-            "",
-            "- WHEN a DeepTalk utterance is processed",
-            "- THEN the project summary and notes SHOULD be updated",
-            "",
-            "### Requirement: Ask proactive project questions",
-            "",
-            "The assistant SHOULD derive proactive questions from SDD structure, user state, "
-            "multimodal observations, and configured hook nudges.",
-            "",
-            "#### Scenario: A signal appears",
-            "",
-            "- WHEN the conversation reveals a requirement, design choice, emotional cue, "
-            "observation window, stale question, or archive opportunity",
-            "- THEN DeepTalk SHOULD ask one focused next question",
-            "- AND the sidecar SHOULD record the active proactive signal",
-            "",
-            "### Requirement: Treat multimodal input as an observation window",
-            "",
-            "DeepTalk SHOULD support summaries from several keyframes or video snippets instead "
-            "of assuming a single captured frame represents the user's state.",
-            "",
-            "#### Scenario: Visual context is available",
-            "",
-            "- WHEN multiple frames or a short video-derived observation are available",
-            "- THEN DeepTalk SHOULD ask from the observed change over time",
-            "- AND it SHOULD avoid storing sensitive visual profile facts unless approved",
-            "",
-            "### Requirement: Guide spoken turns with reusable moves",
-            "",
-            "DeepTalk SHOULD use short spoken guidance moves so structure is audible, not hidden in markdown.",
-            "",
-            "#### Scenario: User is vague or emotionally loaded",
-            "",
-            "- WHEN the user gives an uncertain, emotional, or open-ended turn",
-            "- THEN DeepTalk SHOULD mirror, frame, optionally offer lanes, and ask one question",
-            "- AND the sidecar SHOULD record the active guidance move",
+            spec_body,
             "",
         ]),
         encoding="utf-8",

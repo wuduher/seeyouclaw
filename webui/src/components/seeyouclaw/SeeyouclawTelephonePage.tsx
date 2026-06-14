@@ -82,11 +82,26 @@ const TELEPHONE_INCOMPLETE_UTTERANCE_MS = 2_800;
 const TELEPHONE_VOICE = "Ethan";
 const TELEPHONE_AUDIO_MODEL = "qwen3-omni-flash";
 const DEEPTALK_SYNC_TEXT_LIMIT = 900;
+const DEEPTALK_PAUSE_HOOK_MS = 28_000;
+const DEEPTALK_OBSERVATION_FRAME_GAP_MS = 380;
 
 function normalizeSpokenText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+function formatDeepTalkObservationText(
+  frameCount: number,
+  decision: {
+    level: string;
+    trigger: string;
+    nextContext?: VisionRouteContext | null;
+  },
+): string {
+  const kind = decision.nextContext?.kind ?? "scene";
+  return normalizeSpokenText(
+    `Visual observation window: ${frameCount} frame(s), route=${decision.level}, context=${kind}, trigger=${decision.trigger}.`,
+  );
+}
 function compactDeepTalkText(text: string): string {
   const normalized = normalizeSpokenText(text);
   if (normalized.length <= DEEPTALK_SYNC_TEXT_LIMIT) return normalized;
@@ -241,6 +256,10 @@ export function SeeyouclawTelephonePage({
   const lastCommittedUtteranceRef = useRef("");
   const playAudioFinishRef = useRef<(() => void) | null>(null);
   const deepTalkProjectRef = useRef<SeeyouclawDeepTalkProject | null>(null);
+  const deepTalkEnabledRef = useRef(false);
+  const pendingObservationTextRef = useRef<string | null>(null);
+  const lastVoiceActivityRef = useRef(Date.now());
+  const pauseHookSentRef = useRef(false);
   const latestProjectAssistantIdRef = useRef<string | null>(null);
   const stopAgentRef = useRef<() => void>(() => undefined);
   const startListeningRef = useRef<(options?: { bargeIn?: boolean }) => void>(() => undefined);
@@ -286,6 +305,15 @@ export function SeeyouclawTelephonePage({
   useEffect(() => {
     deepTalkProjectRef.current = deepTalkProject;
   }, [deepTalkProject]);
+
+  useEffect(() => {
+    deepTalkEnabledRef.current = deepTalkEnabled;
+  }, [deepTalkEnabled]);
+
+  const touchVoiceActivity = useCallback(() => {
+    lastVoiceActivityRef.current = Date.now();
+    pauseHookSentRef.current = false;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -466,6 +494,7 @@ export function SeeyouclawTelephonePage({
     recognition.interimResults = true;
     recognition.lang = "zh-CN";
     recognition.onresult = (event) => {
+      touchVoiceActivity();
       let finalText = "";
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
@@ -524,7 +553,7 @@ export function SeeyouclawTelephonePage({
     } catch {
       recognitionRef.current = null;
     }
-  }, [hybridEnabled, interruptAssistant, scheduleUtteranceCommit, startSegment, stopListening]);
+  }, [hybridEnabled, interruptAssistant, scheduleUtteranceCommit, startSegment, stopListening, touchVoiceActivity]);
 
   useEffect(() => {
     startListeningRef.current = startListening;
@@ -575,6 +604,19 @@ export function SeeyouclawTelephonePage({
     try {
       const snapshot = await camera.capture({ maxWidth: 720, quality: 0.68 });
       cooldownUntilRef.current = Date.now() + CAPTURE_COOLDOWN_MS;
+      let frameCount = 1;
+      if (deepTalkEnabledRef.current && camera.state === "ready") {
+        try {
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, DEEPTALK_OBSERVATION_FRAME_GAP_MS);
+          });
+          await camera.capture({ maxWidth: 480, quality: 0.62 });
+          frameCount = 2;
+        } catch {
+          // Single-frame observation is still useful.
+        }
+        pendingObservationTextRef.current = formatDeepTalkObservationText(frameCount, decision);
+      }
       return {
         media: {
           data_url: snapshot.dataUrl,
@@ -635,15 +677,27 @@ export function SeeyouclawTelephonePage({
   const updateDeepTalkProject = useCallback((payload: {
     assistantText?: string;
     chatId?: string;
+    hookText?: string;
+    observationText?: string;
     projectId?: string;
     userText?: string;
   }) => {
+    const observationText = payload.observationText
+      ?? pendingObservationTextRef.current
+      ?? undefined;
+    if (observationText && !payload.observationText) {
+      pendingObservationTextRef.current = null;
+    }
     const syncPayload = {
       ...payload,
       ...(payload.userText ? { userText: compactDeepTalkText(payload.userText) } : {}),
       ...(payload.assistantText ? {
         assistantText: compactDeepTalkText(payload.assistantText),
       } : {}),
+      ...(observationText ? {
+        observationText: compactDeepTalkText(observationText),
+      } : {}),
+      ...(payload.hookText ? { hookText: compactDeepTalkText(payload.hookText) } : {}),
     };
     void updateSeeyouclawDeepTalkProject(token, syncPayload)
       .then((response) => {
@@ -663,6 +717,7 @@ export function SeeyouclawTelephonePage({
     if (!nextChatId) return;
     setMode("thinking");
     setSpeechLabel("Thinking");
+    touchVoiceActivity();
     if (deepTalkEnabled) {
       void ensureDeepTalkProject(nextChatId, text).then((project) => {
         if (project) updateDeepTalkProject({ projectId: project.id, userText: text });
@@ -684,8 +739,30 @@ export function SeeyouclawTelephonePage({
     ensureDeepTalkProject,
     prepareVisionImage,
     send,
+    touchVoiceActivity,
     updateDeepTalkProject,
   ]);
+
+  useEffect(() => {
+    if (!deepTalkEnabled || !active) return;
+    const timer = window.setInterval(() => {
+      if (!activeRef.current || !deepTalkEnabledRef.current) return;
+      if (isStreamingRef.current || speakingRef.current) return;
+      if (micMutedRef.current) return;
+      if (mode !== "listening") return;
+      const idleMs = Date.now() - lastVoiceActivityRef.current;
+      if (idleMs < DEEPTALK_PAUSE_HOOK_MS) return;
+      if (pauseHookSentRef.current) return;
+      const project = deepTalkProjectRef.current;
+      if (!project) return;
+      pauseHookSentRef.current = true;
+      updateDeepTalkProject({
+        projectId: project.id,
+        hookText: "Long pause detected; revisit the open question or offer a gentle checkpoint.",
+      });
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [active, deepTalkEnabled, mode, updateDeepTalkProject]);
 
   useEffect(() => {
     const onFinal = (event: Event) => {
@@ -699,6 +776,7 @@ export function SeeyouclawTelephonePage({
   const speakAssistant = useCallback(async (text: string) => {
     const spokenText = normalizeSpokenText(text);
     if (!spokenText) return;
+    touchVoiceActivity();
     speakingRef.current = true;
     setMode("speaking");
     setSpeechLabel("Preparing voice");
@@ -737,7 +815,7 @@ export function SeeyouclawTelephonePage({
         startListeningRef.current();
       }
     }
-  }, [playAudio, speakWithBrowser, stopListening, token]);
+  }, [playAudio, speakWithBrowser, stopListening, touchVoiceActivity, token]);
 
   useEffect(() => {
     if (!active || isStreaming || !assistant?.content.trim()) return;
@@ -747,7 +825,7 @@ export function SeeyouclawTelephonePage({
   }, [active, assistant?.content, assistant?.id, isStreaming, speakAssistant]);
 
   useEffect(() => {
-    if (!deepTalkEnabled || !assistant?.content.trim()) return;
+    if (!deepTalkEnabled || isStreaming || !assistant?.content.trim()) return;
     if (assistant.id === latestProjectAssistantIdRef.current) return;
     const project = deepTalkProjectRef.current;
     if (!project) return;
@@ -756,7 +834,13 @@ export function SeeyouclawTelephonePage({
       assistantText: assistant.content,
       projectId: project.id,
     });
-  }, [assistant?.content, assistant?.id, deepTalkEnabled, updateDeepTalkProject]);
+  }, [
+    assistant?.content,
+    assistant?.id,
+    deepTalkEnabled,
+    isStreaming,
+    updateDeepTalkProject,
+  ]);
 
   const startCall = useCallback(async () => {
     dismissStreamError();
@@ -764,6 +848,7 @@ export function SeeyouclawTelephonePage({
     setActive(true);
     setMode("connecting");
     setSpeechLabel("Connecting");
+    touchVoiceActivity();
     const opened = await ensureChat();
     if (!opened) {
       setActive(false);
@@ -790,6 +875,7 @@ export function SeeyouclawTelephonePage({
     ensureDeepTalkProject,
     deepTalkEnabled,
     startListening,
+    touchVoiceActivity,
   ]);
 
   const endCall = useCallback(() => {

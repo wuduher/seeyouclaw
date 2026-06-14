@@ -69,6 +69,7 @@ export interface SeeyouclawTelephoneSpeechResponse {
   mimeType?: string | null;
   model?: string;
   ok: boolean;
+  provider?: string | null;
   reason?: string;
   voice?: string;
 }

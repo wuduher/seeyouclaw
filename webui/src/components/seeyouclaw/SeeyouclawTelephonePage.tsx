@@ -712,10 +712,13 @@ export function SeeyouclawTelephonePage({
         format: "wav",
       }).catch(() => null);
       if (cloud?.ok && cloud.audioDataUrl) {
-        setSpeechLabel("Qwen voice");
+        const providerLabel = cloud.provider === "doubao" ? "Doubao voice" : "Qwen voice";
+        setSpeechLabel(providerLabel);
         await playAudio(cloud.audioDataUrl);
       } else {
-        setSpeechLabel("Browser voice fallback");
+        setSpeechLabel(
+          cloud?.reason ? `Browser fallback: ${cloud.reason}` : "Browser voice fallback",
+        );
         await speakWithBrowser(spokenText);
       }
     } catch {
